@@ -1,0 +1,9 @@
+gcc chat_client.c -o chat_client
+
+gcc chat_server.c -o chat_server
+
+./chat_server &
+
+./chat_client
+
+kill xxxxx
