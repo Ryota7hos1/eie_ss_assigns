@@ -1,7 +1,7 @@
-#include <stdio.h>
-#include "udp.h"
 
-#define CLIENT_PORT 10000
+#include <stdio.h>
+#include <stdlib.h>
+#include "udp.h"
 
 // client code
 int main(int argc, char *argv[])
@@ -10,6 +10,10 @@ int main(int argc, char *argv[])
     // binding it to all IP interfaces of this machine,
     // and port number CLIENT_PORT.
     // (See details of the function in udp.h)
+    int CLIENT_PORT = atoi(argv[1]);  /// takes a string from custom port and store it as an int
+    char msg[BUFFER_SIZE];
+    strncpy(msg, argv[2], BUFFER_SIZE-1);
+    msg[BUFFER_SIZE-1] = '\0';
     int sd = udp_socket_open(CLIENT_PORT);
 
     // Variable to store the server's IP address and port
@@ -31,12 +35,13 @@ int main(int argc, char *argv[])
     char client_request[BUFFER_SIZE], server_response[BUFFER_SIZE];
 
     // Demo code (remove later)
-    strcpy(client_request, "Dummy Request");
+    //strcpy(client_request, "Dummy Request");
+    sprintf(client_request, "Client on port: %d, message: %s", CLIENT_PORT, msg);
 
     // This function writes to the server (sends request)
     // through the socket at sd.
     // (See details of the function in udp.h)
-    rc = udp_socket_write(sd, &server_addr, client_request, CLIENT_PORT, BUFFER_SIZE);
+    rc = udp_socket_write(sd, &server_addr, client_request, BUFFER_SIZE);
 
     if (rc > 0)
     {
