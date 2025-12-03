@@ -101,3 +101,17 @@ int udp_socket_write(int sd, struct sockaddr_in *addr, char *buffer, int n)
     int addr_len = sizeof(struct sockaddr_in);
     return sendto(sd, buffer, n, 0, (struct sockaddr *)addr, addr_len);
 }
+
+typedef struct Node{
+    char name[BUFFER_SIZE];
+    struct sockaddr_in client_ad;
+    struct Node *next;
+} Node;
+
+Node* create_node(char name[BUFFER_SIZE], struct sockaddr_in client_ad) {
+    Node *n = malloc(sizeof(Node));
+    n->name = name;
+    n->client_ad = client_ad;
+    n->next = NULL;
+    return n;
+}

@@ -13,38 +13,52 @@ int main(int argc, char *argv[])
     // and port number SERVER_PORT
     // (See details of the function in udp.h)
     int sd = udp_socket_open(SERVER_PORT);
+    
 
     assert(sd > -1);
+
+    printf("Server is listening on port %d\n", SERVER_PORT);
 
     // Server main loop
     while (1) 
     {
-        // Storage for request and response messages
-        char client_request[BUFFER_SIZE], server_response[BUFFER_SIZE];
-
-        // Demo code (remove later)
-        printf("Server is listening on port %d\n", SERVER_PORT);
-
-        // Variable to store incoming client's IP address and port
+        char client_request[BUFFER_SIZE], server_msg1[BUFFER_SIZE], server_msg2[BUFFER_SIZE];
         struct sockaddr_in client_address;
-    
-        // This function reads incoming client request from
-        // the socket at sd.
-        // (See details of the function in udp.h)
         int rc = udp_socket_read(sd, &client_address, client_request, BUFFER_SIZE);
-
-        // Successfully received an incoming request
         if (rc > 0)
         {
-            // Demo code (remove later)
+            char instruction[BUFFER_SIZE];
+            char message[BUFFER_SIZE];
+            sscanf(client_request, "%[^$]$ %[^\n]", instruction, message);
+            if (instruction == "conn") {
+
+            }
+            else if (instruction == "say") {
+
+            }
+            else if (instruction == "sayto") {
+
+            }
+            else if (instruction == "disconn") {
+
+            }
+            else if (instruction == "mute") {
+
+            }
+            else if (instruction == "unmute") {
+
+            }
+            else if (instruction == "rename") {
+
+            }
+            else if (instruction == "kick") {
+
+            }
             strcpy(server_response, "Hi, the server has received: ");
             char ip[BUFFER_SIZE];
             inet_ntop(AF_INET, &client_address.sin_addr, ip, BUFFER_SIZE);
             strcat(server_response, ip);
             strcat(server_response, "\n");
-            int port;
-            char message[BUFFER_SIZE];
-            sscanf(client_request, "Client on port: %d, message: %[^\n]", &port, message);
             strcat(server_response, client_request);
             strcat(server_response, "\n");
             bool low = false;
