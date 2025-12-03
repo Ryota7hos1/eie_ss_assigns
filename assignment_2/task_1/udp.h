@@ -106,12 +106,29 @@ typedef struct Node{
     char name[BUFFER_SIZE];
     struct sockaddr_in client_ad;
     struct Node *next;
+    Node mute_list;
 } Node;
 
 Node* create_node(char name[BUFFER_SIZE], struct sockaddr_in client_ad) {
     Node *n = malloc(sizeof(Node));
-    n->name = name;
+    strncpy(n->name, name, BUFFER_SIZE);
+    n->name[BUFFER_SIZE-1] = '\0';
     n->client_ad = client_ad;
+    n->mute_list = NULL;
     n->next = NULL;
     return n;
+}
+void push_back(Node **head, char name[BUFFER_SIZE], struct sockaddr_in client_ad) {
+    Node *n = create_node(name[BUFFER_SIZE], client_ad);
+
+    if (*head == NULL) {
+        *head = n;
+        return;
+    }
+
+    Node *cur = *head;
+    while (cur->next != NULL) {
+        cur = cur->next;
+    }
+    cur->next = n;
 }

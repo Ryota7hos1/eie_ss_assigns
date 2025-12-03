@@ -7,14 +7,10 @@
 
 int main(int argc, char *argv[])
 {
-
-    // This function opens a UDP socket,
-    // binding it to all IP interfaces of this machine,
-    // and port number SERVER_PORT
-    // (See details of the function in udp.h)
+    struct sockaddr_in server_addr;
     int sd = udp_socket_open(SERVER_PORT);
-    
-
+    getsockname(sd, (struct sockaddr *)&server_addr, BUFFER_SIZE);
+    Node* server = create_node("Server", server_addr);
     assert(sd > -1);
 
     printf("Server is listening on port %d\n", SERVER_PORT);
@@ -31,10 +27,13 @@ int main(int argc, char *argv[])
             char message[BUFFER_SIZE];
             sscanf(client_request, "%[^$]$ %[^\n]", instruction, message);
             if (instruction == "conn") {
-
+                push_back(server, message, client_address);
+                sprintf(server_msg2, "Hi %s, you have succesfully connected to the chat\n", message); 
+                ///send a msg to client_address only
+                rc = udp_socket_write(sd, &client_address, server_msg2, BUFFER_SIZE);
             }
             else if (instruction == "say") {
-
+                ///go through the list 
             }
             else if (instruction == "sayto") {
 
@@ -43,7 +42,7 @@ int main(int argc, char *argv[])
 
             }
             else if (instruction == "mute") {
-
+                ///
             }
             else if (instruction == "unmute") {
 
