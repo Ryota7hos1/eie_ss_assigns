@@ -35,7 +35,7 @@ int main(int argc, char *argv[])
         {
             // Demo code (remove later)
             strcpy(server_response, "received request from port number: ");
-            strcat(server_response, CLIENT_PORT);
+            strcat(server_response, client_request);
             strcat(server_response, "\n");
 
             // This function writes back to the incoming client,
