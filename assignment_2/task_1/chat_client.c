@@ -26,7 +26,7 @@ void *sender_thread(void *arg) {
         client_request[strcspn(client_request, "\n")] = '\0'; 
         
         // Check for connection
-        sscanf(client_request, "%[^$]$ %[^\0]", req_type, req_cont); 
+        sscanf(client_request, "%[^$]$ %[^\n]", req_type, req_cont); 
         if (!strcmp(req_type, "conn")){
             pthread_mutex_lock(args->mutex);
             args->connected = true;
@@ -47,7 +47,7 @@ void *sender_thread(void *arg) {
         // (See details of the function in udp.h)
         udp_socket_write(args->sd, &args->server_addr, client_request, BUFFER_SIZE);
 
-        sscanf(client_request, "%[^$]$ %[^\0]", req_type, req_cont);
+        sscanf(client_request, "%[^$]$ %[^\n]", req_type, req_cont);
 
         // Check for disconnection
         if (strcmp(req_type, "disconn") == 0) { 
