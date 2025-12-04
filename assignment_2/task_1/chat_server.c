@@ -27,7 +27,7 @@ int main(int argc, char *argv[])
             char message[BUFFER_SIZE];
             sscanf(client_request, "%[^$]$ %[^\n]", instruction, message);
             if (instruction == "conn") {
-                push_back(server, message, client_address);
+                push_back(&server, message, client_address);
                 sprintf(server_msg2, "Hi %s, you have succesfully connected to the chat\n", message); 
                 ///send a msg to client_address only
                 rc = udp_socket_write(sd, &client_address, server_msg2, BUFFER_SIZE);
@@ -85,7 +85,9 @@ int main(int argc, char *argv[])
                 ///take the node out of the linked list and connect the before and next nodes
                 ///dereference the node along with the blockNode
                 Node* sender = find_node_addr(server, client_address);
+                strcpy(server_msg2, "Disconnected. Bye!");
                 if (sender != NULL) {
+                    rc = udp_socket_write(sd, &client_address, server_msg2, BUFFER_SIZE);
                     disconnect_node(&server, sender);
                 }
             }
@@ -119,17 +121,17 @@ int main(int argc, char *argv[])
                 ///some kind of condition
                 Node* target = find_node(server, message);
                 if (target != NULL) {
+                    strcpy(server_msg2, "You have been removed from the chat");
+                    snprintf(server_msg1, BUFFER_SIZE, "%s has been removed from the chat\n", message);
+                    rc = udp_socket_write(sd, &target->client_ad, server_msg2, BUFFER_SIZE);
                     disconnect_node(&server, target);
+                    Node* cur = server;
+                    while (cur != NULL) {
+                        rc = udp_socket_write(sd, &cur->client_ad, server_msg1, BUFFER_SIZE);
+                        cur = cur->next;
+                    }
                 }
             }
-
-            // This function writes back to the incoming client,
-            // whose address is now available in client_address, 
-            // through the socket at sd.
-            // (See details of the function in udp.h)
-            rc = udp_socket_write(sd, &client_address, server_msg1, BUFFER_SIZE);
-
-            // Demo code (remove later)
             printf("Request served...\n");
         }
     }
