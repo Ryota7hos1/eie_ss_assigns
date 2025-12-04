@@ -102,14 +102,29 @@ int udp_socket_write(int sd, struct sockaddr_in *addr, char *buffer, int n)
     return sendto(sd, buffer, n, 0, (struct sockaddr *)addr, addr_len);
 }
 
-typedef struct Node{
+
+typedef struct Node Node;
+typedef struct BlockNode BlockNode;
+
+struct BlockNode {
+    Node *client;
+    BlockNode *next;
+};
+
+struct Node {
     char name[BUFFER_SIZE];
     struct sockaddr_in client_ad;
-    struct Node *next;
+    Node *next;
     BlockNode *blocked_by;
-} Node;
+};
 
-Node* create_node(char name[BUFFER_SIZE], struct sockaddr_in client_ad) {
+typedef struct {
+    int sd;
+    struct sockaddr_in client_addr;
+    char message[BUFFER_SIZE];
+} Packet;
+
+Node* create_node(const char *name, struct sockaddr_in client_ad) {
     Node *n = malloc(sizeof(Node));
     strncpy(n->name, name, BUFFER_SIZE);
     n->name[BUFFER_SIZE-1] = '\0';
@@ -119,7 +134,7 @@ Node* create_node(char name[BUFFER_SIZE], struct sockaddr_in client_ad) {
     return n;
 }
 
-void push_back(Node **head, char name[BUFFER_SIZE], struct sockaddr_in client_ad) {
+void push_back(Node **head, const char *name, struct sockaddr_in client_ad) {
     Node *n = create_node(name, client_ad);
 
     if (*head == NULL) {
@@ -156,6 +171,15 @@ Node* find_node_addr(Node *head, struct sockaddr_in client_ad) {
     return NULL;
 }
 
+void free_blocklist(BlockNode* head) {
+    BlockNode* cur = head;
+    while (cur != NULL) {
+        BlockNode* tmp = cur;
+        cur = cur->next;
+        free(tmp);
+    }
+}
+
 void disconnect_node(Node** head, Node* target) {
     Node* cur = *head;
     Node* prev = NULL;
@@ -183,12 +207,6 @@ void disconnect_node(Node** head, Node* target) {
     }
 }
 
-
-typedef struct BlockNode {
-    Node *client;
-    struct BlockNode *next;
-} BlockNode;
-
 BlockNode* create_blocknode(Node* target) {
     BlockNode *n = malloc(sizeof(BlockNode));
     n->client = target;
@@ -200,7 +218,6 @@ void push_back_blocknode(Node *blocker, Node* blocked) {
     ///add new blocknode of blocker into the blocked_by list of blocked
     BlockNode *n = malloc(sizeof(BlockNode));
     n->client = blocker;
-
     n->next = blocked->blocked_by;
     blocked->blocked_by = n;
 }
@@ -227,18 +244,3 @@ void remove_blocknode(Node *blocker, Node* blocked) {
         cur = cur->next;
     }
 }
-
-void free_blocklist(BlockNode* head) {
-    BlockNode* cur = head;
-    while (cur != NULL) {
-        BlockNode* tmp = cur;
-        cur = cur->next;
-        free(tmp);
-    }
-}
-
-typedef struct {
-    int sd;
-    struct sockaddr_in client_addr;
-    char message[BUFFER_SIZE];
-} Packet;
