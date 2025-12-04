@@ -5,6 +5,67 @@
 #include <stdbool.h>
 #include "udp.h"
 
+typedef struct {
+    int sd;
+    struct sockaddr_in client_addr;
+    char message[BUFFER_SIZE];
+} Packet;
+
+Node* server = NULL;
+
+void* worker_thread(void* arg) {
+    Packet* pkt = (Packet*)arg;
+    char instruction[BUFFER_SIZE], message[BUFFER_SIZE];
+    char server_reply[BUFFER_SIZE];
+    sscanf(pkt->message, "%[^$]$ %[^\n]", instruction, message);
+    Node* sender = find_node_addr(server, pkt->client_addr);
+    if (strcmp(instruction, "conn") == 0) {
+        push_back(&server, message, pkt->client_addr);
+        snprintf(server_reply, BUFFER_SIZE, "Hi %s, you have successfully connected to the chat\n", message);
+        udp_socket_write(pkt->sd, &pkt->client_addr, server_reply, BUFFER_SIZE);
+    }
+    else if (strcmp(instruction, "say") == 0) {
+        Node* cur = server;
+        while (cur != NULL) {
+            bool blocked = false;
+            BlockNode* block = cur->blocked_by;
+            while (block != NULL) {
+                if (block->client == sender) {
+                    blocked = true;
+                break;
+                }
+            block = block->next;
+            }
+        if (!blocked) {
+            snprintf(server_reply, BUFFER_SIZE, "%s: %s\n", sender->name, message);
+            udp_socket_write(pkt->sd, &cur->client_ad, server_reply, BUFFER_SIZE);
+        }
+        cur = cur->next;
+        }
+    }
+    else if (strcmp(instruction, "sayto") == 0) {
+        char name[BUFFER_SIZE], msg[BUFFER_SIZE];
+        sscanf(message, "%[^ ] %[^\n]", name, msg);
+        Node* receiver = find_node_by_name(server, name1);
+        BlockNode* cur = sender->blocked_by;
+        if (sender != NULL && receiver != NULL) {
+            bool blocked = false;
+            while (cur != NULL) {
+                if (cur->client == sender) {
+                    blocked = true;
+                    break;
+                }
+                cur = cur->next;
+            }
+            if (!blocked) {
+                snprintf(server_reply, BUFFER_SIZE, "%s: %s\n", sender->name, msg);
+                udp_socket_write(pkt->sd, &receiver->client_ad, server_reply, BUFFER_SIZE);
+            }
+        }
+    }
+}
+
+
 int main(int argc, char *argv[])
 {
     struct sockaddr_in server_addr;
