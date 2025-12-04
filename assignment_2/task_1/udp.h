@@ -106,7 +106,7 @@ typedef struct Node{
     char name[BUFFER_SIZE];
     struct sockaddr_in client_ad;
     struct Node *next;
-    Node mute_list;
+    struct Node *mute_list;
 } Node;
 
 Node* create_node(char name[BUFFER_SIZE], struct sockaddr_in client_ad) {
