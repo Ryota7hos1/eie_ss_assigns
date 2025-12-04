@@ -1,3 +1,4 @@
+
 // libraries needed for various functions
 // use man page for details
 #include <sys/types.h>  // data types like size_t, socklen_t
@@ -99,4 +100,147 @@ int udp_socket_write(int sd, struct sockaddr_in *addr, char *buffer, int n)
 
     int addr_len = sizeof(struct sockaddr_in);
     return sendto(sd, buffer, n, 0, (struct sockaddr *)addr, addr_len);
+}
+
+
+typedef struct Node Node;
+typedef struct BlockNode BlockNode;
+
+struct BlockNode {
+    Node *client;
+    BlockNode *next;
+};
+
+struct Node {
+    char name[BUFFER_SIZE];
+    struct sockaddr_in client_ad;
+    Node *next;
+    BlockNode *blocked_by;
+};
+
+typedef struct {
+    int sd;
+    struct sockaddr_in client_addr;
+    char message[BUFFER_SIZE];
+} Packet;
+
+Node* create_node(const char *name, struct sockaddr_in client_ad) {
+    Node *n = malloc(sizeof(Node));
+    strncpy(n->name, name, BUFFER_SIZE);
+    n->name[BUFFER_SIZE-1] = '\0';
+    n->client_ad = client_ad;
+    n->blocked_by = NULL;
+    n->next = NULL;
+    return n;
+}
+
+void push_back(Node **head, const char *name, struct sockaddr_in client_ad) {
+    Node *n = create_node(name, client_ad);
+
+    if (*head == NULL) {
+        *head = n;
+        return;
+    }
+
+    Node *cur = *head;
+    while (cur->next != NULL) {
+        cur = cur->next;
+    }
+    cur->next = n;
+}
+
+Node* find_node(Node *head, const char *target_name) {
+    Node *cur = head;
+    while (cur != NULL) {
+        if (strncmp(cur->name, target_name, BUFFER_SIZE) == 0)
+            return cur;
+        cur = cur->next;
+    }
+    return NULL;
+}
+
+Node* find_node_addr(Node *head, struct sockaddr_in client_ad) {
+    Node *cur = head;
+    while (cur != NULL) {
+        if (cur->client_ad.sin_family == client_ad.sin_family &&
+            cur->client_ad.sin_port == client_ad.sin_port &&
+            cur->client_ad.sin_addr.s_addr == client_ad.sin_addr.s_addr)
+            return cur;
+        cur = cur->next;
+    }
+    return NULL;
+}
+
+void free_blocklist(BlockNode* head) {
+    BlockNode* cur = head;
+    while (cur != NULL) {
+        BlockNode* tmp = cur;
+        cur = cur->next;
+        free(tmp);
+    }
+}
+
+void disconnect_node(Node** head, Node* target) {
+    Node* cur = *head;
+    Node* prev = NULL;
+
+    // Find the target node in the list
+    while (cur != NULL) {
+        if (cur == target) {
+            // Remove from list
+            if (prev == NULL) {
+                // Target is head
+                *head = cur->next;
+            } else {
+                prev->next = cur->next;
+            }
+
+            // Free the block/mute list
+            free_blocklist(cur->blocked_by);
+
+            // Free the node itself
+            free(cur);
+            return;
+        }
+        prev = cur;
+        cur = cur->next;
+    }
+}
+
+BlockNode* create_blocknode(Node* target) {
+    BlockNode *n = malloc(sizeof(BlockNode));
+    n->client = target;
+    n->next = NULL;
+    return n;
+}
+
+void push_back_blocknode(Node *blocker, Node* blocked) {
+    ///add new blocknode of blocker into the blocked_by list of blocked
+    BlockNode *n = malloc(sizeof(BlockNode));
+    n->client = blocker;
+    n->next = blocked->blocked_by;
+    blocked->blocked_by = n;
+}
+
+void remove_blocknode(Node *blocker, Node* blocked) {
+    ///find the blocknode that has blocker inside the blocked's blocknode linked list
+    ///make the previous blocknodes pointer point to blocker->next
+    ///dereference the blocker blocknode
+    BlockNode *cur = blocked->blocked_by;
+    BlockNode *prev = NULL;
+    while (cur != NULL) {
+        if (cur->client == blocker) {
+            // Found the node to remove
+            if (prev == NULL) {
+                // Node is at head
+                blocked->blocked_by = cur->next;
+            } else {
+                prev->next = cur->next;
+            }
+            free(cur);
+            return;
+        }
+        prev = cur;
+        cur = cur->next;
+    }
 }
