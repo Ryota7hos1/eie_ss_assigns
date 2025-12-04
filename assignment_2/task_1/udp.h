@@ -156,6 +156,34 @@ Node* find_node_addr(Node *head, struct sockaddr_in client_ad) {
     return NULL;
 }
 
+void disconnect_node(Node** head, Node* target) {
+    Node* cur = *head;
+    Node* prev = NULL;
+
+    // Find the target node in the list
+    while (cur != NULL) {
+        if (cur == target) {
+            // Remove from list
+            if (prev == NULL) {
+                // Target is head
+                *head = cur->next;
+            } else {
+                prev->next = cur->next;
+            }
+
+            // Free the block/mute list
+            free_blocklist(cur->blocked_by);
+
+            // Free the node itself
+            free(cur);
+            return;
+        }
+        prev = cur;
+        cur = cur->next;
+    }
+}
+
+
 typedef struct BlockNode {
     Node *client;
     struct BlockNode *next;
@@ -178,5 +206,33 @@ void push_back_blocknode(Node *blocker, Node* blocked) {
 }
 
 void remove_blocknode(Node *blocker, Node* blocked) {
-    
+    ///find the blocknode that has blocker inside the blocked's blocknode linked list
+    ///make the previous blocknodes pointer point to blocker->next
+    ///dereference the blocker blocknode
+    BlockNode *cur = blocked->blocked_by;
+    BlockNode *prev = NULL;
+    while (cur != NULL) {
+        if (cur->client == blocker) {
+            // Found the node to remove
+            if (prev == NULL) {
+                // Node is at head
+                blocked->blocked_by = cur->next;
+            } else {
+                prev->next = cur->next;
+            }
+            free(cur);
+            return;
+        }
+        prev = cur;
+        cur = cur->next;
+    }
+}
+
+void free_blocklist(BlockNode* head) {
+    BlockNode* cur = head;
+    while (cur != NULL) {
+        BlockNode* tmp = cur;
+        cur = cur->next;
+        free(tmp);
+    }
 }

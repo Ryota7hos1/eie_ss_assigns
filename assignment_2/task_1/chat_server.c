@@ -35,17 +35,61 @@ int main(int argc, char *argv[])
             else if (instruction == "say") {
                 ///go through the list
                 ///do a for loop for the muted from list 
-                ///if it is foud in there don't send a msg to them
+                ///if it is found in there don't send a msg to them
+                Node* sender = find_node_addr(server, client_address);
+                Node* cur = server;
+                while (cur != NULL) {
+                    bool blocked = false;
+                    BlockNode* block = sender->blocked_by;
+                    while (block != NULL) {
+                        if (block->client == cur) {
+                            blocked = true;
+                        break;
+                        }
+                    block = block->next;
+                    }
+                    if (!blocked) {
+                        snprintf(server_msg2, BUFFER_SIZE, "%s: %s\n", sender->name, message);
+                        rc = udp_socket_write(sd, &cur->client_ad, server_msg2, BUFFER_SIZE);
+                    }
+                    cur = cur->next;
+                }
             }
             else if (instruction == "sayto") {
                 ///find the sender in the linked list
                 ///see if the receiver is in the muted from list
                 ///if not, send the msg
+                ///split message into 2
+                char name1[BUFFER_SIZE];
+                char message1[BUFFER_SIZE];
+                sscanf(message, "%[^ ] %[^\n]", name1, message1);
+                bool blocked = false;
+                Node* sender = find_node_addr(server, client_address);
+                Node* receiver = find_node_by_name(server, name1);
+                BlockNode* cur = sender->blocked_by;
+                if (sender != NULL && receiver != NULL) {
+                    while (cur != NULL) {
+                        if (cur->client == receiver) {
+                            blocked = true;
+                            break;
+                        }
+                        cur = cur->next;
+                    }
+                    if (!blocked) {
+                        snprintf(server_msg2, BUFFER_SIZE, "%s: %s\n", sender->name, message1);
+                        rc = udp_socket_write(sd, &receiver->client_ad, server_msg2, BUFFER_SIZE);
+                    }
+                }
             }
             else if (instruction == "disconn") {
                 ///take the node out of the linked list and connect the before and next nodes
+                ///dereference the node along with the blockNode
+                Node* sender = find_node_addr(server, client_address);
+                if (sender != NULL) {
+                    disconnect_node(&server, sender);
+                }
             }
-            else if (instruction == "mute") {
+            else if (instruction == "mute") {//good
                 ///each node has a mute_list that stores which nodes it is muted from
                 ///this way is better because if we make mute_list store which nodes it is muting,
                 /// we will be doing a loop for every possible element in the linked list and it scales horribly (?)
@@ -54,19 +98,29 @@ int main(int argc, char *argv[])
                     push_back_blocknode(find_node_addr(server, client_address), target);
                 }
             }
-            else if (instruction == "unmute") {
+            else if (instruction == "unmute") {//good
                 ///go to the receiver in the linked list
                 ///remove sender from the receiver's muted from list
                 ///connect before and next nodes
-                
+                Node* blocked = find_node(server, message);
+                remove_blocknode(find_node_addr(server, client_address), blocked);
             }
-            else if (instruction == "rename") {
+            else if (instruction == "rename") { //good
                 ///find sender in linked list
                 ///change name to the new name
+                Node* name_change = find_node_addr(server, client_address);
+                strncpy(name_change->name, message, BUFFER_SIZE);
+                name_change->name[BUFFER_SIZE - 1] = '\0';
             }
             else if (instruction == "kick") {
                 ///check some kind of authority
                 ///disconnect a node
+                Node* sender = find_node_addr(server, client_address);
+                ///some kind of condition
+                Node* target = find_node(server, message);
+                if (target != NULL) {
+                    disconnect_node(&server, target);
+                }
             }
 
             // This function writes back to the incoming client,
