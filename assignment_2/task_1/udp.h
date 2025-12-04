@@ -106,7 +106,7 @@ typedef struct Node{
     char name[BUFFER_SIZE];
     struct sockaddr_in client_ad;
     struct Node *next;
-    struct Node *mute_list;
+    BlockNode *blocked_by;
 } Node;
 
 Node* create_node(char name[BUFFER_SIZE], struct sockaddr_in client_ad) {
@@ -114,12 +114,13 @@ Node* create_node(char name[BUFFER_SIZE], struct sockaddr_in client_ad) {
     strncpy(n->name, name, BUFFER_SIZE);
     n->name[BUFFER_SIZE-1] = '\0';
     n->client_ad = client_ad;
-    n->mute_list = NULL;
+    n->blocked_by = NULL;
     n->next = NULL;
     return n;
 }
+
 void push_back(Node **head, char name[BUFFER_SIZE], struct sockaddr_in client_ad) {
-    Node *n = create_node(name[BUFFER_SIZE], client_ad);
+    Node *n = create_node(name, client_ad);
 
     if (*head == NULL) {
         *head = n;
@@ -131,4 +132,51 @@ void push_back(Node **head, char name[BUFFER_SIZE], struct sockaddr_in client_ad
         cur = cur->next;
     }
     cur->next = n;
+}
+
+Node* find_node(Node *head, const char *target_name) {
+    Node *cur = head;
+    while (cur != NULL) {
+        if (strncmp(cur->name, target_name, BUFFER_SIZE) == 0)
+            return cur;
+        cur = cur->next;
+    }
+    return NULL;
+}
+
+Node* find_node_addr(Node *head, struct sockaddr_in client_ad) {
+    Node *cur = head;
+    while (cur != NULL) {
+        if (cur->client_ad.sin_family == client_ad.sin_family &&
+            cur->client_ad.sin_port == client_ad.sin_port &&
+            cur->client_ad.sin_addr.s_addr == client_ad.sin_addr.s_addr)
+            return cur;
+        cur = cur->next;
+    }
+    return NULL;
+}
+
+typedef struct BlockNode {
+    Node *client;
+    struct BlockNode *next;
+} BlockNode;
+
+BlockNode* create_blocknode(Node* target) {
+    BlockNode *n = malloc(sizeof(BlockNode));
+    n->client = target;
+    n->next = NULL;
+    return n;
+}
+
+void push_back_blocknode(Node *blocker, Node* blocked) {
+    ///add new blocknode of blocker into the blocked_by list of blocked
+    BlockNode *n = malloc(sizeof(BlockNode));
+    n->client = blocker;
+
+    n->next = blocked->blocked_by;
+    blocked->blocked_by = n;
+}
+
+void remove_blocknode(Node *blocker, Node* blocked) {
+    
 }

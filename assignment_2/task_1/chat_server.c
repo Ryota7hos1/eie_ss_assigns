@@ -49,12 +49,16 @@ int main(int argc, char *argv[])
                 ///each node has a mute_list that stores which nodes it is muted from
                 ///this way is better because if we make mute_list store which nodes it is muting,
                 /// we will be doing a loop for every possible element in the linked list and it scales horribly (?)
-                       
+                Node* target = find_node(server, message);
+                if (target != NULL) {
+                    push_back_blocknode(find_node_addr(server, client_address), target);
+                }
             }
             else if (instruction == "unmute") {
                 ///go to the receiver in the linked list
                 ///remove sender from the receiver's muted from list
                 ///connect before and next nodes
+                
             }
             else if (instruction == "rename") {
                 ///find sender in linked list
@@ -64,45 +68,12 @@ int main(int argc, char *argv[])
                 ///check some kind of authority
                 ///disconnect a node
             }
-            strcpy(server_response, "Hi, the server has received: ");
-            char ip[BUFFER_SIZE];
-            inet_ntop(AF_INET, &client_address.sin_addr, ip, BUFFER_SIZE);
-            strcat(server_response, ip);
-            strcat(server_response, "\n");
-            strcat(server_response, client_request);
-            strcat(server_response, "\n");
-            bool low = false;
-            bool up = false;
-            for (int i = 0; message[i] != '\0'; i++) {
-                if (islower(message[i])){
-                    low = true;
-                }
-                else if (isupper(message[i])){
-                    up = true;
-                }
-            }
-            if (low && up) {
-                strcat(server_response, "the msg was: mixed");
-                strcat(server_response, "\n");
-            }
-            else if (low) {
-                strcat(server_response, "the msg was: lower-case");
-                strcat(server_response, "\n");
-            }
-            else if (up) {
-                strcat(server_response, "the msg was: upper-case");
-                strcat(server_response, "\n");
-            }
-            else {
-                strcat(server_response, "error");
-                strcat(server_response, "\n");
-            }
 
             // This function writes back to the incoming client,
             // whose address is now available in client_address, 
             // through the socket at sd.
             // (See details of the function in udp.h)
-            rc = udp_socket_write(sd, &client_address, server_response, BUFFER_SIZE);
+            rc = udp_socket_write(sd, &client_address, server_msg1, BUFFER_SIZE);
 
             // Demo code (remove later)
             printf("Request served...\n");
