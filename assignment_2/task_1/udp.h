@@ -236,3 +236,9 @@ void free_blocklist(BlockNode* head) {
         free(tmp);
     }
 }
+
+typedef struct {
+    int sd;
+    struct sockaddr_in client_addr;
+    char message[BUFFER_SIZE];
+} Packet;
