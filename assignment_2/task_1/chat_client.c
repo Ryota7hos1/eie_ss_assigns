@@ -11,9 +11,9 @@ int main(int argc, char *argv[])
     // and port number CLIENT_PORT.
     // (See details of the function in udp.h)
     int CLIENT_PORT = atoi(argv[1]);  /// takes a string from custom port and store it as an int
-    char msg[BUFFER_SIZE];
+    char msg[BUFFER_SIZE-50];
     strncpy(msg, argv[2], BUFFER_SIZE-1);
-    msg[BUFFER_SIZE-1] = '\0';
+    msg[BUFFER_SIZE-51] = '\0';
     int sd = udp_socket_open(CLIENT_PORT);
 
     // Variable to store the server's IP address and port

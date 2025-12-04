@@ -50,10 +50,10 @@ int main(int argc, char *argv[])
             bool low = false;
             bool up = false;
             for (int i = 0; message[i] != '\0'; i++) {
-                if (islower(message[i])){
+                if (islower(message[i]) && low==false){
                     low = true;
                 }
-                else if (isupper(message[i])){
+                else if (isupper(message[i]) && up==false){
                     up = true;
                 }
             }
