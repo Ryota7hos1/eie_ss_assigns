@@ -1,1 +1,14 @@
-aaa
+Introductory tasks - 
+These tasks were meant to make us understand how the server and client opens ports.
+sd = socket descriptor, this is how we keep track of all the info needed to identify a socket. (client_addr, IP etc)
+We also looked into how the client takes info from the terminal (user input) and how to send those to the server.
+
+Server - 
+The requirement was to make a multi-thread server that has a listener thread and a thread that takes care of all the work implementing a lock for mutual exclusion in critical areas
+I have decided to make all the server response to the client request before making it multithreaded
+Firstly, I made a linked list to keep track of all the client name, sockaddr_in, with the server at index 0 to make it easy to traverse through the list
+The way I have implemented mute is to have each Node of the linked list keep track of all the other Nodes it is "blocked by" in another Linked List type BlockNode which has Node and next as parameters. Making each Node store which Nodes they are "blocked by" makes it better for effeciency because we will be accessing the same Linked list to check wether we should send a msg to the other client or not making it more effecient in terms of memory accessing.
+After I have implemented my Linked Lists, I implemented the threads
+I split the threads into 2 pieces, one of which is the listener thread which has udp_socket_read, which is a blocking function, gets an input from the sender thread of the client to spawn a worker thread of the server for each message.
+A worker thread spawns and does its work while stalling when they couldn't access the lock.
+Listener thread is free to make as many worker threads as they want. Fairness is not considered in this part of our assignment.
