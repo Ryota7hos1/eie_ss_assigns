@@ -7,11 +7,16 @@
 #include <arpa/inet.h>  // inet_pton(), inet_ntop()
 #include <unistd.h>     // close()
 #include <string.h>     // memset(), memcpy()
+#include <pthread.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <time.h>
+#include <stdbool.h>
 
 #define BUFFER_SIZE 1024
 #define SERVER_PORT 12000
+
+#define CB_SIZE 15
 
 int set_socket_addr(struct sockaddr_in *addr, const char *ip, int port)
 {
@@ -117,6 +122,12 @@ struct Node {
     struct sockaddr_in client_ad;
     Node *next;
     BlockNode *blocked_by;
+    time_t last_active;
+    bool connected;
+    char history[CB_SIZE][BUFFER_SIZE];
+    int hist_head;
+    int hist_count;
+    pthread_mutex_t history_lock;
 };
 
 typedef struct {
@@ -125,13 +136,27 @@ typedef struct {
     char message[BUFFER_SIZE];
 } Packet;
 
+typedef struct {
+    char data[CB_SIZE][BUFFER_SIZE];
+    int head;      // points to oldest
+    int count;     // how many items in the buffer
+
+    pthread_mutex_t lock;
+    pthread_cond_t not_empty;
+} CircularBuffer;
+
 Node* create_node(const char *name, struct sockaddr_in client_ad) {
     Node *n = malloc(sizeof(Node));
     strncpy(n->name, name, BUFFER_SIZE);
     n->name[BUFFER_SIZE-1] = '\0';
     n->client_ad = client_ad;
-    n->blocked_by = NULL;
+    n->connected = true;
+    n->last_active = time(NULL);
+    n->hist_head = 0;
+    n->hist_count = 0;
     n->next = NULL;
+    n->blocked_by = NULL;
+    pthread_mutex_init(&n->history_lock, NULL);
     return n;
 }
 
@@ -182,31 +207,9 @@ void free_blocklist(BlockNode* head) {
 }
 
 void disconnect_node(Node** head, Node* target) {
-    Node* cur = *head;
-    Node* prev = NULL;
-
-    // Find the target node in the list
-    while (cur != NULL) {
-        if (cur == target) {
-            // Remove from list
-            if (prev == NULL) {
-                // Target is head
-                *head = cur->next;
-            } else {
-                prev->next = cur->next;
-            }
-
-            // Free the block/mute list
-            free_blocklist(cur->blocked_by);
-
-            // Free the node itself
-            free(cur);
-            return;
-        }
-        prev = cur;
-        cur = cur->next;
-    }
+    target->connected = false;
 }
+
 
 BlockNode* create_blocknode(Node* target) {
     BlockNode *n = malloc(sizeof(BlockNode));
@@ -244,4 +247,81 @@ void remove_blocknode(Node *blocker, Node* blocked) {
         prev = cur;
         cur = cur->next;
     }
+}
+
+void cb_init(CircularBuffer *cb) {
+    cb->head = 0;
+    cb->count = 0;
+
+    pthread_mutex_init(&cb->lock, NULL);
+    pthread_cond_init(&cb->not_empty, NULL);
+}
+
+void cb_destroy(CircularBuffer *cb) {
+    pthread_mutex_destroy(&cb->lock);
+    pthread_cond_destroy(&cb->not_empty);
+}
+
+void cb_push(CircularBuffer *cb, const char *str) {
+    pthread_mutex_lock(&cb->lock);
+
+    int index = (cb->head + cb->count) % CB_SIZE;
+
+    if (cb->count == CB_SIZE) {
+        // Buffer full → overwrite oldest
+        cb->head = (cb->head + 1) % CB_SIZE;
+    } else {
+        cb->count++;
+    }
+
+    strncpy(cb->data[index], str, BUFFER_SIZE - 1);
+    cb->data[index][BUFFER_SIZE - 1] = '\0';
+
+    // Wake up any blocking consumer
+    pthread_cond_signal(&cb->not_empty);
+
+    pthread_mutex_unlock(&cb->lock);
+}
+
+int cb_pop(CircularBuffer *cb, char *out) {
+    pthread_mutex_lock(&cb->lock);
+
+    // Wait for data
+    while (cb->count == 0) {
+        pthread_cond_wait(&cb->not_empty, &cb->lock);
+    }
+
+    strncpy(out, cb->data[cb->head], BUFFER_SIZE);
+    cb->head = (cb->head + 1) % CB_SIZE;
+    cb->count--;
+
+    pthread_mutex_unlock(&cb->lock);
+    return 1;
+}
+
+void cb_iterate(CircularBuffer *cb, void (*callback)(const char *msg)) {
+    pthread_mutex_lock(&cb->lock);
+
+    for (int i = 0; i < cb->count; i++) {
+        int idx = (cb->head + i) % CB_SIZE;
+        callback(cb->data[idx]);
+    }
+
+    pthread_mutex_unlock(&cb->lock);
+}
+
+void node_cb_push(Node* node, const char* msg) {
+    if (!node) return;
+    pthread_mutex_lock(&node->history_lock);
+    int idx = (node->hist_head + node->hist_count) % CB_SIZE;
+    strncpy(node->history[idx], msg, BUFFER_SIZE);
+    node->history[idx][BUFFER_SIZE-1] = '\0';
+
+    if (node->hist_count < CB_SIZE) {
+        node->hist_count++;
+    } else {
+        // Buffer is full, advance head
+        node->hist_head = (node->hist_head + 1) % CB_SIZE;
+    }
+    pthread_mutex_unlock(&node->history_lock);
 }

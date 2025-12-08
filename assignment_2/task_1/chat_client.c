@@ -47,9 +47,15 @@ void *sender_thread(void *arg) {
 
         if (strcmp(req_type, "conn") == 0) {
             pthread_mutex_lock(args->mutex);
-            args->connected = true;
+            if (!args->connected) {
+                args->connected = true;   // mark as reconnected
+                udp_socket_write(args->sd, &args->server_addr, client_request, BUFFER_SIZE);
+                pthread_mutex_lock(&ncurses_mutex);
+                wprintw(win_output, "Reconnected to the server.\n");
+                wrefresh(win_output);
+                pthread_mutex_unlock(&ncurses_mutex);
+            } 
             pthread_mutex_unlock(args->mutex);
-            udp_socket_write(args->sd, &args->server_addr, client_request, BUFFER_SIZE);
             break;
         }
 
@@ -84,7 +90,12 @@ void *sender_thread(void *arg) {
             pthread_mutex_lock(args->mutex);
             args->connected = false;
             pthread_mutex_unlock(args->mutex);
-            break;
+            
+            pthread_mutex_lock(&ncurses_mutex);
+            wprintw(win_output, "You are now disconnected. Type conn$ to reconnect.\n");
+            wrefresh(win_output);
+            pthread_mutex_unlock(&ncurses_mutex);
+            continue;
         }
     }
     return NULL;
@@ -107,7 +118,13 @@ void *listener_thread(void *arg) {
 
     while (1) {
         int rc = udp_socket_read(args->sd, &responder_addr, server_response, BUFFER_SIZE);
-
+        pthread_mutex_lock(args->mutex);
+        bool is_connected = args->connected;
+        pthread_mutex_unlock(args->mutex);
+        if (!is_connected) {
+            // Skip processing server messages while disconnected
+            continue;
+        }
         if (rc > 0) {
             pthread_mutex_lock(&ncurses_mutex);
             wprintw(win_output, "%s\n", server_response);
