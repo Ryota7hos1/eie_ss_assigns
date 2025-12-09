@@ -40,7 +40,12 @@
                 existing_user = true;
             }
             pthread_mutex_unlock(&list_mutex);
-            snprintf(server_reply, BUFFER_SIZE, "Hi %.900s, you have successfully connected to the chat\n", message);
+            if (strcmp(message, "") == 0) {
+                snprintf(server_reply, BUFFER_SIZE, "Hi, you have successfully connected to the chat\n");
+            }
+            else {
+                snprintf(server_reply, BUFFER_SIZE, "Hi %.900s, you have successfully connected to the chat\n", message);
+            }
             udp_socket_write(pkt->sd, &pkt->client_addr, server_reply, BUFFER_SIZE);
             udp_socket_write(pkt->sd, &pkt->client_addr, "Global history:\n", BUFFER_SIZE);
             pthread_mutex_lock(&cb->lock);
@@ -53,7 +58,6 @@
             if (existing_user) {
                 udp_socket_write(pkt->sd, &pkt->client_addr, "Private history:\n", BUFFER_SIZE);
                 pthread_mutex_lock(&sender->history_lock);
-                printf("DEBUG: hist_count = %d\n", sender->hist_count);
                 for (int i = 0; i < sender->hist_count; i++) {
                     int idx = (sender->hist_head + i) % CB_SIZE;
                     udp_socket_write(pkt->sd, &pkt->client_addr, sender->history[idx], BUFFER_SIZE);
@@ -150,7 +154,7 @@
                 pthread_mutex_lock(&list_mutex);
                 Node* target = find_node(server, message);
                 if (target != NULL) {
-                    snprintf(server_reply, BUFFER_SIZE, "You have been removed from the chat\n");
+                    snprintf(server_reply, BUFFER_SIZE, "You have been removed from the chat");
                     pthread_mutex_unlock(&list_mutex);
                     udp_socket_write(pkt->sd, &target->client_ad, server_reply, BUFFER_SIZE);
                     snprintf(server_reply, BUFFER_SIZE, "%.100s has been removed from the chat\n", target->name);

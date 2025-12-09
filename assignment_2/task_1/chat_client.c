@@ -8,8 +8,6 @@
 #include <ncurses.h>
 #include "udp.h"
 
-#define CLIENT_PORT 0   // Random available port
-
 typedef struct {
     int sd;
     struct sockaddr_in server_addr;
@@ -84,7 +82,16 @@ void *sender_thread(void *arg) {
         pthread_mutex_unlock(&ncurses_mutex);
         client_request[strcspn(client_request, "\n")] = '\0';
         sscanf(client_request, "%[^$]$ %[^\n]", req_type, req_cont);
-        if (strcmp(req_type, "disconn") == 0) {
+        pthread_mutex_lock(&args->mutex);
+        bool is_connected = args->connected;
+        pthread_mutex_unlock(&args->mutex);
+        if (!is_connected) {
+            pthread_mutex_lock(&ncurses_mutex);
+            wprintw(win_output, "You are disconnected\n");
+            wrefresh(win_output);
+            pthread_mutex_unlock(&ncurses_mutex);
+        }
+        else if (strcmp(req_type, "disconn") == 0) {
             pthread_mutex_lock(&args->mutex);
             args->connected = false;
             pthread_mutex_unlock(&args->mutex);
@@ -92,10 +99,9 @@ void *sender_thread(void *arg) {
             udp_socket_write(args->sd, &args->server_addr, client_request, BUFFER_SIZE);
 
             pthread_mutex_lock(&ncurses_mutex);
-            wprintw(win_output, "Disconnected. Type conn$ YourName to reconnect.\n");
+            wprintw(win_output, "Disconnected. Type conn$ to reconnect.\n");
             wrefresh(win_output);
             pthread_mutex_unlock(&ncurses_mutex);
-
             continue; // Stay in input loop
         }
         if (strcmp(req_type, "conn") == 0) {
@@ -113,7 +119,9 @@ void *sender_thread(void *arg) {
 
             continue;
         }
-        udp_socket_write(args->sd, &args->server_addr, client_request, BUFFER_SIZE);
+        else {
+            udp_socket_write(args->sd, &args->server_addr, client_request, BUFFER_SIZE);
+        }
     }
     return NULL;
 }
@@ -139,13 +147,33 @@ void *listener_thread(void *arg) {
                 wrefresh(win_output);
                 pthread_mutex_unlock(&ncurses_mutex);
             }
+
+            if ((strcmp(server_response,"You have been removed from the chat") == 0)|| (strcmp(server_response, "You have been disconnected from the chat due to inactivity") == 0)) {
+                pthread_mutex_lock(&args->mutex);
+                args->connected = false;
+                pthread_mutex_unlock(&args->mutex);
+                pthread_mutex_lock(&ncurses_mutex);
+                wprintw(win_output, "disconnected\n");
+                wrefresh(win_output);
+                pthread_mutex_unlock(&ncurses_mutex);
+                strcpy(server_response, " ");
+            }
         }
     }
     return NULL;
 }
 
 int main(int argc, char *argv[]) {
-    int sd = udp_socket_open(CLIENT_PORT);
+    int port = 0;  // default to random available port
+
+    if (argc >= 2) {
+        port = atoi(argv[1]);
+        if (port <= 0 || port > 65535) {
+            fprintf(stderr, "Invalid port number. Using random port.\n");
+            port = 0;
+        }
+    }
+    int sd = udp_socket_open(port);
     assert(sd > -1);
 
     struct sockaddr_in server_addr;
