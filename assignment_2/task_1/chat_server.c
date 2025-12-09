@@ -1,4 +1,3 @@
-
     #include <stdio.h>
     #include <stdlib.h>
     #include <ctype.h>
@@ -27,43 +26,57 @@
         }
         if (strcmp(instruction, "conn") == 0) {
             bool existing_user = false;
-            pthread_mutex_lock(&list_mutex);
-            if (sender == NULL) {
-                push_back(&server, message, pkt->client_addr);
-                sender = find_node_addr(server, pkt->client_addr);
-                sender->last_active = time(NULL);
-                sender->connected = true;
+            bool name_duplicate = false;
+            Node* cur = server;
+            while (cur != NULL) {
+                if (strcmp(cur->name, message) == 0) {
+                    name_duplicate = true;
+                    break;
+                }
+                cur = cur->next;
             }
-            else {
-                sender->connected = true;
-                sender->last_active = time(NULL);
-                existing_user = true;
-            }
-            pthread_mutex_unlock(&list_mutex);
-            if (strcmp(message, "") == 0) {
-                snprintf(server_reply, BUFFER_SIZE, "Hi, you have successfully connected to the chat\n");
-            }
-            else {
-                snprintf(server_reply, BUFFER_SIZE, "Hi %.900s, you have successfully connected to the chat\n", message);
-            }
-            udp_socket_write(pkt->sd, &pkt->client_addr, server_reply, BUFFER_SIZE);
-            udp_socket_write(pkt->sd, &pkt->client_addr, "Global history:\n", BUFFER_SIZE);
-            pthread_mutex_lock(&cb->lock);
-            for (int i = 0; i < cb->count; i++) {
-                int idx = (cb->head + i) % CB_SIZE;
-                udp_socket_write(pkt->sd, &pkt->client_addr, cb->data[idx], BUFFER_SIZE);
-            }
-            udp_socket_write(pkt->sd, &pkt->client_addr, "------------------", BUFFER_SIZE);
-            pthread_mutex_unlock(&cb->lock);
-            if (existing_user) {
-                udp_socket_write(pkt->sd, &pkt->client_addr, "Private history:\n", BUFFER_SIZE);
-                pthread_mutex_lock(&sender->history_lock);
-                for (int i = 0; i < sender->hist_count; i++) {
-                    int idx = (sender->hist_head + i) % CB_SIZE;
-                    udp_socket_write(pkt->sd, &pkt->client_addr, sender->history[idx], BUFFER_SIZE);
+            if (!name_duplicate) {
+                pthread_mutex_lock(&list_mutex);
+                if (sender == NULL) {
+                    push_back(&server, message, pkt->client_addr);
+                    sender = find_node_addr(server, pkt->client_addr);
+                    sender->last_active = time(NULL);
+                    sender->connected = true;
+                    strcpy(server_reply, "ok");
+                }
+                else {
+                    sender->connected = true;
+                    sender->last_active = time(NULL);
+                    existing_user = true;
+                    strcpy(server_reply, "Connecting...");
+                }
+                pthread_mutex_unlock(&list_mutex);
+                udp_socket_write(pkt->sd, &pkt->client_addr, server_reply, BUFFER_SIZE);
+                if (strcmp(message, "") == 0) {
+                    snprintf(server_reply, BUFFER_SIZE, "Hi, you have successfully connected to the chat\n");
+                }
+                else {
+                    snprintf(server_reply, BUFFER_SIZE, "Hi %.900s, you have successfully connected to the chat\n", message);
+                }
+                udp_socket_write(pkt->sd, &pkt->client_addr, server_reply, BUFFER_SIZE);
+                udp_socket_write(pkt->sd, &pkt->client_addr, "Global history:\n", BUFFER_SIZE);
+                pthread_mutex_lock(&cb->lock);
+                for (int i = 0; i < cb->count; i++) {
+                    int idx = (cb->head + i) % CB_SIZE;
+                    udp_socket_write(pkt->sd, &pkt->client_addr, cb->data[idx], BUFFER_SIZE);
                 }
                 udp_socket_write(pkt->sd, &pkt->client_addr, "------------------", BUFFER_SIZE);
-                pthread_mutex_unlock(&sender->history_lock);
+                pthread_mutex_unlock(&cb->lock);
+                if (existing_user) {
+                    udp_socket_write(pkt->sd, &pkt->client_addr, "Private history:\n", BUFFER_SIZE);
+                    pthread_mutex_lock(&sender->history_lock);
+                    for (int i = 0; i < sender->hist_count; i++) {
+                        int idx = (sender->hist_head + i) % CB_SIZE;
+                        udp_socket_write(pkt->sd, &pkt->client_addr, sender->history[idx], BUFFER_SIZE);
+                    }
+                    udp_socket_write(pkt->sd, &pkt->client_addr, "------------------", BUFFER_SIZE);
+                    pthread_mutex_unlock(&sender->history_lock);
+                }
             }
         }
         else if (strcmp(instruction, "say") == 0) {
@@ -128,7 +141,16 @@
         else if (strcmp(instruction, "mute") == 0) {
             pthread_mutex_lock(&list_mutex);
             Node* target = find_node(server, message);
+            bool alr_muted = false;
             if (target != NULL) {
+                BlockNode* target_blocknode = target->blocked_by;
+                while (target_blocknode != NULL) {
+                if (target_blocknode->client == sender) {
+                    alr_muted = true;
+                    target_blocknode = target_blocknode->next;
+                }
+            }
+            if (!alr_muted)
                 push_back_blocknode(sender, target);
             }
             pthread_mutex_unlock(&list_mutex);
@@ -143,17 +165,31 @@
         }
         else if (strcmp(instruction, "rename") == 0) {
             pthread_mutex_lock(&list_mutex);
-            strncpy(sender->name, message, BUFFER_SIZE);
-            sender->name[BUFFER_SIZE - 1] = '\0';
-            snprintf(server_reply, BUFFER_SIZE, "You are now known as %.100s\n", sender->name);
-            udp_socket_write(pkt->sd, &pkt->client_addr, server_reply, BUFFER_SIZE);
+            bool name_exists = false;
+            Node* cur = server;
+            while (cur != NULL) {
+                if (strcmp((cur->name), message) == 0) {
+                    name_exists = true;
+                    break;
+                }
+                cur = cur->next;
+            }
+            if (!name_exists) {
+                strncpy(sender->name, message, BUFFER_SIZE);
+                sender->name[BUFFER_SIZE - 1] = '\0';
+                snprintf(server_reply, BUFFER_SIZE, "You are now known as %.100s\n", sender->name);
+            }
+            else {
+                snprintf(server_reply, BUFFER_SIZE, "The name is already in use");
+            }
             pthread_mutex_unlock(&list_mutex);
+            udp_socket_write(pkt->sd, &pkt->client_addr, server_reply, BUFFER_SIZE);
         }
         else if (strcmp(instruction, "kick") == 0) {
             if (ntohs(sender->client_ad.sin_port) == 6666) {
                 pthread_mutex_lock(&list_mutex);
                 Node* target = find_node(server, message);
-                if (target != NULL) {
+                if (target != NULL && target->connected) {
                     snprintf(server_reply, BUFFER_SIZE, "You have been removed from the chat");
                     pthread_mutex_unlock(&list_mutex);
                     udp_socket_write(pkt->sd, &target->client_ad, server_reply, BUFFER_SIZE);
@@ -207,13 +243,13 @@
             time_t now = time(NULL);
             while (cur != NULL) {
                 Node* nxt = cur->next;
-                if (strcmp(cur->name, "Server") != 0) {
+                if ((strcmp(cur->name, "Server") != 0) && cur->connected) {
                     time_t idle = now - cur->last_active;
-                    if (idle > 300 && idle <= 400) { 
+                    if (idle > 300 && idle <= 359) { 
                         // Send warning ping
                         udp_socket_write(sd, &cur->client_ad, "ping$ You will be disconnected from the chat due to inactivity", BUFFER_SIZE);
                     } 
-                    else if (idle > 400) {
+                    else if (idle > 359) {
                         // Disconnect idle client
                         udp_socket_write(sd, &cur->client_ad, "You have been disconnected from the chat due to inactivity", BUFFER_SIZE);
                         disconnect_node(&server, cur);

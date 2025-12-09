@@ -19,11 +19,9 @@ typedef struct {
 WINDOW *win_input, *win_output;
 pthread_mutex_t ncurses_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-void *sender_thread(void *arg) {
+void *initial_thread(void *arg) { //initial loop
     thread_args_t *args = (thread_args_t *)arg;
     char client_request[BUFFER_SIZE], req_type[BUFFER_SIZE], req_cont[BUFFER_SIZE];
-
-    // Initial connection loop
     while (1) {
         pthread_mutex_lock(&ncurses_mutex);
         werase(win_input);
@@ -44,26 +42,49 @@ void *sender_thread(void *arg) {
         sscanf(client_request, "%[^$]$ %[^\n]", req_type, req_cont);
 
         if (strcmp(req_type, "conn") == 0) {
-            pthread_mutex_lock(&args->mutex);
-            args->connected = true;
-            pthread_mutex_unlock(&args->mutex);
-
             udp_socket_write(args->sd, &args->server_addr, client_request, BUFFER_SIZE);
-
             pthread_mutex_lock(&ncurses_mutex);
-            wprintw(win_output, "Connected to server.\n");
+            wprintw(win_output, "I wrote to the server.\n");
             wrefresh(win_output);
             pthread_mutex_unlock(&ncurses_mutex);
-
-            break;  // Enter main loop
+            char server_reply[BUFFER_SIZE];
+            udp_socket_read(args->sd, &args->server_addr, server_reply, BUFFER_SIZE);
+            pthread_mutex_lock(&ncurses_mutex);
+            wprintw(win_output, "%s\n", server_reply);
+            wrefresh(win_output);
+            pthread_mutex_unlock(&ncurses_mutex);
+            if (strcmp(server_reply, "ok") ==0) {
+                pthread_mutex_lock(&ncurses_mutex);
+                wprintw(win_output, "I'm getting an ok.\n");
+                wrefresh(win_output);
+                pthread_mutex_unlock(&ncurses_mutex);
+                break;
+            }
+            pthread_mutex_lock(&ncurses_mutex);
+            wprintw(win_output, "I'm don't get an ok.\n");
+            wrefresh(win_output);
+            pthread_mutex_unlock(&ncurses_mutex);
         }
-
-        pthread_mutex_lock(&ncurses_mutex);
-        wprintw(win_output, "Invalid connection command. Use: conn$ YourName\n");
-        wrefresh(win_output);
-        pthread_mutex_unlock(&ncurses_mutex);
+        else {
+            pthread_mutex_lock(&ncurses_mutex);
+            wprintw(win_output, "Invalid connection command. Use: conn$ YourName\n");
+            wrefresh(win_output);
+            pthread_mutex_unlock(&ncurses_mutex);
+        }
     }
+    pthread_mutex_lock(&args->mutex);
+    args->connected = true;
+    pthread_mutex_unlock(&args->mutex);
+            
+    pthread_mutex_lock(&ncurses_mutex);
+    wprintw(win_output, "Connected to server.\n");
+    wrefresh(win_output);
+    pthread_mutex_unlock(&ncurses_mutex);
+}
 
+void *sender_thread(void *arg) {
+    thread_args_t *args = (thread_args_t *)arg;
+    char client_request[BUFFER_SIZE], req_type[BUFFER_SIZE], req_cont[BUFFER_SIZE];
     // Main message loop
     while (1) {
         pthread_mutex_lock(&ncurses_mutex);
@@ -156,7 +177,7 @@ void *listener_thread(void *arg) {
                 wprintw(win_output, "disconnected\n");
                 wrefresh(win_output);
                 pthread_mutex_unlock(&ncurses_mutex);
-                strcpy(server_response, " ");
+                strcpy(server_response, "disconnect");
             }
         }
     }
@@ -203,7 +224,9 @@ int main(int argc, char *argv[]) {
     wrefresh(win_input);
     wrefresh(win_output);
 
-    pthread_t sender_tid, listener_tid;
+    pthread_t sender_tid, listener_tid, init_tid;
+    pthread_create(&init_tid, NULL, initial_thread, &args);
+    pthread_join(init_tid, NULL);
     pthread_create(&sender_tid, NULL, sender_thread, &args);
     pthread_create(&listener_tid, NULL, listener_thread, &args);
 
