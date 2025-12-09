@@ -43,25 +43,16 @@ void *initial_thread(void *arg) { //initial loop
 
         if (strcmp(req_type, "conn") == 0) {
             udp_socket_write(args->sd, &args->server_addr, client_request, BUFFER_SIZE);
-            pthread_mutex_lock(&ncurses_mutex);
-            wprintw(win_output, "I wrote to the server.\n");
-            wrefresh(win_output);
-            pthread_mutex_unlock(&ncurses_mutex);
             char server_reply[BUFFER_SIZE];
             udp_socket_read(args->sd, &args->server_addr, server_reply, BUFFER_SIZE);
-            pthread_mutex_lock(&ncurses_mutex);
-            wprintw(win_output, "%s\n", server_reply);
-            wrefresh(win_output);
-            pthread_mutex_unlock(&ncurses_mutex);
             if (strcmp(server_reply, "ok") ==0) {
-                pthread_mutex_lock(&ncurses_mutex);
-                wprintw(win_output, "I'm getting an ok.\n");
-                wrefresh(win_output);
-                pthread_mutex_unlock(&ncurses_mutex);
+                pthread_mutex_lock(&args->mutex);
+                args->connected = true;
+                pthread_mutex_unlock(&args->mutex);
                 break;
             }
             pthread_mutex_lock(&ncurses_mutex);
-            wprintw(win_output, "I'm don't get an ok.\n");
+            wprintw(win_output, "Please enter a different name.\n");
             wrefresh(win_output);
             pthread_mutex_unlock(&ncurses_mutex);
         }

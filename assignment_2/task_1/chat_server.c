@@ -48,14 +48,13 @@
                     sender->connected = true;
                     sender->last_active = time(NULL);
                     existing_user = true;
-                    strcpy(server_reply, "Connecting...");
                 }
                 pthread_mutex_unlock(&list_mutex);
-                udp_socket_write(pkt->sd, &pkt->client_addr, server_reply, BUFFER_SIZE);
                 if (strcmp(message, "") == 0) {
                     snprintf(server_reply, BUFFER_SIZE, "Hi, you have successfully connected to the chat\n");
                 }
                 else {
+                    udp_socket_write(pkt->sd, &pkt->client_addr, server_reply, BUFFER_SIZE);
                     snprintf(server_reply, BUFFER_SIZE, "Hi %.900s, you have successfully connected to the chat\n", message);
                 }
                 udp_socket_write(pkt->sd, &pkt->client_addr, server_reply, BUFFER_SIZE);
@@ -77,6 +76,9 @@
                     udp_socket_write(pkt->sd, &pkt->client_addr, "------------------", BUFFER_SIZE);
                     pthread_mutex_unlock(&sender->history_lock);
                 }
+            }
+            else {
+                udp_socket_write(pkt->sd, &pkt->client_addr, "Duplicate", BUFFER_SIZE);
             }
         }
         else if (strcmp(instruction, "say") == 0) {
