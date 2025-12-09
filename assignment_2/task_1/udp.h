@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 #define BUFFER_SIZE 1024
 #define SERVER_PORT 12000

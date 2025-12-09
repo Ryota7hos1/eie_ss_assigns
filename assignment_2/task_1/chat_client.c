@@ -14,7 +14,7 @@ typedef struct {
     int sd;
     struct sockaddr_in server_addr;
     bool connected;
-    pthread_mutex_t *mutex;
+    pthread_mutex_t mutex;
 } thread_args_t;
 
 // ncurses windows and mutex for thread-safe updates
@@ -46,17 +46,18 @@ void *sender_thread(void *arg) {
         sscanf(client_request, "%[^$]$ %[^\n]", req_type, req_cont);
 
         if (strcmp(req_type, "conn") == 0) {
-            pthread_mutex_lock(args->mutex);
-            if (!args->connected) {
-                args->connected = true;   // mark as reconnected
-                udp_socket_write(args->sd, &args->server_addr, client_request, BUFFER_SIZE);
-                pthread_mutex_lock(&ncurses_mutex);
-                wprintw(win_output, "Reconnected to the server.\n");
-                wrefresh(win_output);
-                pthread_mutex_unlock(&ncurses_mutex);
-            } 
-            pthread_mutex_unlock(args->mutex);
-            break;
+            pthread_mutex_lock(&args->mutex);
+            args->connected = true;
+            pthread_mutex_unlock(&args->mutex);
+
+            udp_socket_write(args->sd, &args->server_addr, client_request, BUFFER_SIZE);
+
+            pthread_mutex_lock(&ncurses_mutex);
+            wprintw(win_output, "Connected to server.\n");
+            wrefresh(win_output);
+            pthread_mutex_unlock(&ncurses_mutex);
+
+            break;  // Enter main loop
         }
 
         pthread_mutex_lock(&ncurses_mutex);
@@ -81,22 +82,38 @@ void *sender_thread(void *arg) {
         pthread_mutex_lock(&ncurses_mutex);
         noecho();
         pthread_mutex_unlock(&ncurses_mutex);
-
         client_request[strcspn(client_request, "\n")] = '\0';
-        udp_socket_write(args->sd, &args->server_addr, client_request, BUFFER_SIZE);
-
         sscanf(client_request, "%[^$]$ %[^\n]", req_type, req_cont);
         if (strcmp(req_type, "disconn") == 0) {
-            pthread_mutex_lock(args->mutex);
+            pthread_mutex_lock(&args->mutex);
             args->connected = false;
-            pthread_mutex_unlock(args->mutex);
-            
+            pthread_mutex_unlock(&args->mutex);
+
+            udp_socket_write(args->sd, &args->server_addr, client_request, BUFFER_SIZE);
+
             pthread_mutex_lock(&ncurses_mutex);
-            wprintw(win_output, "You are now disconnected. Type conn$ to reconnect.\n");
+            wprintw(win_output, "Disconnected. Type conn$ YourName to reconnect.\n");
             wrefresh(win_output);
             pthread_mutex_unlock(&ncurses_mutex);
+
+            continue; // Stay in input loop
+        }
+        if (strcmp(req_type, "conn") == 0) {
+            pthread_mutex_lock(&args->mutex);
+            if (!args->connected) {
+                args->connected = true;
+                udp_socket_write(args->sd, &args->server_addr, client_request, BUFFER_SIZE);
+
+                pthread_mutex_lock(&ncurses_mutex);
+                wprintw(win_output, "Reconnected.\n");
+                wrefresh(win_output);
+                pthread_mutex_unlock(&ncurses_mutex);
+            }
+            pthread_mutex_unlock(&args->mutex);
+
             continue;
         }
+        udp_socket_write(args->sd, &args->server_addr, client_request, BUFFER_SIZE);
     }
     return NULL;
 }
@@ -106,41 +123,22 @@ void *listener_thread(void *arg) {
     struct sockaddr_in responder_addr;
     char server_response[BUFFER_SIZE];
 
-    // Wait for initial connection
-    while (1) {
-        pthread_mutex_lock(args->mutex);
-        bool is_connected = args->connected;
-        pthread_mutex_unlock(args->mutex);
-
-        if (is_connected) break;
-        usleep(10000);
-    }
-
     while (1) {
         int rc = udp_socket_read(args->sd, &responder_addr, server_response, BUFFER_SIZE);
-        pthread_mutex_lock(args->mutex);
-        bool is_connected = args->connected;
-        pthread_mutex_unlock(args->mutex);
-        if (!is_connected) {
-            // Skip processing server messages while disconnected
-            continue;
-        }
         if (rc > 0) {
-            pthread_mutex_lock(&ncurses_mutex);
-            wprintw(win_output, "%s\n", server_response);
-            wrefresh(win_output);
-            pthread_mutex_unlock(&ncurses_mutex);
+            server_response[rc] = '\0';
 
-            pthread_mutex_lock(args->mutex);
+            pthread_mutex_lock(&args->mutex);
             bool is_connected = args->connected;
-            pthread_mutex_unlock(args->mutex);
+            pthread_mutex_unlock(&args->mutex);
 
-            if (!is_connected) break;
-        } else if (rc == -1) {
-            pthread_mutex_lock(args->mutex);
-            args->connected = false;
-            pthread_mutex_unlock(args->mutex);
-            break;
+            // Always read packets, but only display if connected
+            if (is_connected) {
+                pthread_mutex_lock(&ncurses_mutex);
+                wprintw(win_output, "%s\n", server_response);
+                wrefresh(win_output);
+                pthread_mutex_unlock(&ncurses_mutex);
+            }
         }
     }
     return NULL;
@@ -154,8 +152,12 @@ int main(int argc, char *argv[]) {
     int rc = set_socket_addr(&server_addr, "127.0.0.1", SERVER_PORT);
     assert(rc == 0);
 
-    pthread_mutex_t access_mutex = PTHREAD_MUTEX_INITIALIZER;
-    thread_args_t args = { .sd = sd, .server_addr = server_addr, .connected = false, .mutex = &access_mutex };
+    thread_args_t args = { 
+        .sd = sd,
+        .server_addr = server_addr,
+        .connected = false
+    };
+    pthread_mutex_init(&args.mutex, NULL);
 
     // Initialize ncurses
     initscr();
