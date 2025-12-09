@@ -7,3 +7,11 @@ gcc chat_server.c -o chat_server
 ./chat_client
 
 kill xxxxx
+
+gcc chat_server.c -o server -lpthread
+
+gcc chat_client.c udp.h -o client -lncurses -lpthread
+
+./server &
+
+./client
