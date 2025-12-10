@@ -1,0 +1,23 @@
+UDP Chat System
+1. Project Overview: 
+This project implements a multithreaded UDP chat system in C with a terminal-based client, consisting of a central server and multiple clients. It demonstrates core concepts of concurrency, synchronization, and UDP communication by allowing multiple users to join a chat, send messages, and interact in real time. Both the server and clients use multiple threads and shared data structures to manage communication safely and efficiently.
+2. Short Description
+Client:
+・Ncurses-based UI with separate input and output windows.
+・Three-thread architecture
+    ・initial_thread – initial connection.
+    ・sender_thread – continuously reads user input and sends to server.
+    ・listener_thread – continuously receives messages from server.
+・Supports connection, disconnection, reconnection after disconnection, and sending messages
+・Displays messages from the Server
+Server:
+・Open a server port
+・Maintains a linked list of connected users with parameters such as names or connection status
+・Stores global and per-user message history using circular buffers.
+・Three-thread architecture
+    ・listener_thread – Listens for UDP packets from clients and Spawns a worker thread for each received packet.
+    ・worker_thread – performs work according to packet received when spawned by listener_thread.
+    ・cleanup_thread – continuously checks connection status of clients to disconnect them.
+・Manages user activity and automatically disconnects inactive clients.
+・Handles commands such as conn, say, sayto, disconn, mute, unmute, rename, ret-ping, and kick (admin).
+3. Features Implemented

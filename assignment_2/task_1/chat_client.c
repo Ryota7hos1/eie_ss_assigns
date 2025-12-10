@@ -1,3 +1,20 @@
+// ============================================================================
+// client.c  —  UDP Chat Client with ncurses UI
+// ============================================================================
+// This client connects to the UDP chat server, providing:
+//
+//   • ncurses-based UI with separate input/output windows
+//   • Three-thread architecture:
+//        1. initial_thread  – handles initial "conn$NAME" until accepted
+//        2. sender_thread   – continuously reads user input and sends commands
+//        3. listener_thread – continuously receives packets from server
+//
+//   • Graceful handling of connect / disconnect / reconnect
+//   • Thread-safe UI printing using ncurses_mutex
+//   • Thread-safe connection state using args->mutex
+//
+// ============================================================================
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -6,8 +23,17 @@
 #include <unistd.h>
 #include <assert.h>
 #include <ncurses.h>
-#include "udp.h"
+#include "udp.h"   // Uses the UDP helper functions and structures
 
+// ============================================================================
+// Thread argument structure
+// ----------------------------------------------------------------------------
+// Holds:
+//   • sd           - socket descriptor
+//   • server_addr  - address of the server
+//   • connected    - whether this client is currently connected
+//   • mutex        - protects modifications to 'connected'
+// ============================================================================
 typedef struct {
     int sd;
     struct sockaddr_in server_addr;
@@ -15,42 +41,61 @@ typedef struct {
     pthread_mutex_t mutex;
 } thread_args_t;
 
-// ncurses windows and mutex for thread-safe updates
+// ============================================================================
+// Global ncurses UI windows & mutex for safe concurrent updates
+// ============================================================================
 WINDOW *win_input, *win_output;
 pthread_mutex_t ncurses_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+// ============================================================================
+// initial_thread
+// ----------------------------------------------------------------------------
+// This thread runs only once at startup.
+//
+// It keeps prompting the user until they successfully connect using:
+//         conn$ NAME
+//
+// The server must reply with "ok" for the client to proceed.
+//
+// Upon success, it sets args->connected = true.
+// ============================================================================
 void *initial_thread(void *arg) { //initial loop
     thread_args_t *args = (thread_args_t *)arg;
-    char client_request[BUFFER_SIZE], req_type[BUFFER_SIZE], req_cont[BUFFER_SIZE];
+    char client_request[BUFFER_SIZE];
+    char req_type[BUFFER_SIZE];
+    char req_cont[BUFFER_SIZE];
     while (1) {
         pthread_mutex_lock(&ncurses_mutex);
         werase(win_input);
         box(win_input, 0, 0);
         mvwprintw(win_input, 1, 1, ">> ");
-        wmove(win_input, 1, 4);  // Move cursor after prompt
+        wmove(win_input, 1, 4);
         wrefresh(win_input);
-        echo(); // Show typed characters
+        echo(); // Allow user to see typed characters
         pthread_mutex_unlock(&ncurses_mutex);
-
+        // Read input
         wgetnstr(win_input, client_request, BUFFER_SIZE - 1);
 
         pthread_mutex_lock(&ncurses_mutex);
-        noecho(); // Stop echoing
+        noecho(); // Stop echoing input
         pthread_mutex_unlock(&ncurses_mutex);
 
+        // Remove trailing newline
         client_request[strcspn(client_request, "\n")] = '\0';
+        // Extract type and content (e.g., conn$ name)
         sscanf(client_request, "%[^$]$ %[^\n]", req_type, req_cont);
-
+        // --- Validate connection command ---
         if (strcmp(req_type, "conn") == 0) {
+            // Send connection request to server
             udp_socket_write(args->sd, &args->server_addr, client_request, BUFFER_SIZE);
+            // Await server response
             char server_reply[BUFFER_SIZE];
             udp_socket_read(args->sd, &args->server_addr, server_reply, BUFFER_SIZE);
+            
             if (strcmp(server_reply, "ok") ==0) {
-                pthread_mutex_lock(&args->mutex);
-                args->connected = true;
-                pthread_mutex_unlock(&args->mutex);
-                break;
+                break; // Exit initial loop
             }
+            // Server did not accept name
             pthread_mutex_lock(&ncurses_mutex);
             wprintw(win_output, "Please enter a different name.\n");
             wrefresh(win_output);
@@ -63,21 +108,37 @@ void *initial_thread(void *arg) { //initial loop
             pthread_mutex_unlock(&ncurses_mutex);
         }
     }
+    // Set connected = true
     pthread_mutex_lock(&args->mutex);
     args->connected = true;
     pthread_mutex_unlock(&args->mutex);
-            
+    // Final confirmation message
     pthread_mutex_lock(&ncurses_mutex);
     wprintw(win_output, "Connected to server.\n");
     wrefresh(win_output);
     pthread_mutex_unlock(&ncurses_mutex);
 }
 
+// ============================================================================
+// sender_thread
+// ----------------------------------------------------------------------------
+// This thread handles user input *after the client is connected*.
+//
+// Supports commands:
+//     conn$NAME     - reconnect after disconnection
+//     disconn$      - disconnect (but keep state preserved on server)
+//
+// All other input is forwarded directly to server.
+//
+// sender_thread always runs, even if disconnected. It checks connected state
+// and warns the user if they type something while disconnected.
+// ============================================================================
 void *sender_thread(void *arg) {
     thread_args_t *args = (thread_args_t *)arg;
     char client_request[BUFFER_SIZE], req_type[BUFFER_SIZE], req_cont[BUFFER_SIZE];
     // Main message loop
     while (1) {
+        // --- Display prompt ---
         pthread_mutex_lock(&ncurses_mutex);
         werase(win_input);
         box(win_input, 0, 0);
@@ -87,22 +148,33 @@ void *sender_thread(void *arg) {
         echo();
         pthread_mutex_unlock(&ncurses_mutex);
 
+        // Get user input
         wgetnstr(win_input, client_request, BUFFER_SIZE - 1);
 
         pthread_mutex_lock(&ncurses_mutex);
         noecho();
         pthread_mutex_unlock(&ncurses_mutex);
+
         client_request[strcspn(client_request, "\n")] = '\0';
         sscanf(client_request, "%[^$]$ %[^\n]", req_type, req_cont);
+
+        // Thread-safe read of connection state
         pthread_mutex_lock(&args->mutex);
         bool is_connected = args->connected;
         pthread_mutex_unlock(&args->mutex);
+
+        // --------------------------------------------------------------------
+        // Handle disconnected state
+        // --------------------------------------------------------------------
         if (!is_connected) {
             pthread_mutex_lock(&ncurses_mutex);
             wprintw(win_output, "You are disconnected\n");
             wrefresh(win_output);
             pthread_mutex_unlock(&ncurses_mutex);
         }
+        // --------------------------------------------------------------------
+        // Command: disconn$
+        // --------------------------------------------------------------------
         else if (strcmp(req_type, "disconn") == 0) {
             pthread_mutex_lock(&args->mutex);
             args->connected = false;
@@ -116,6 +188,9 @@ void *sender_thread(void *arg) {
             pthread_mutex_unlock(&ncurses_mutex);
             continue; // Stay in input loop
         }
+        // --------------------------------------------------------------------
+        // Command: conn$ (reconnection)
+        // --------------------------------------------------------------------
         if (strcmp(req_type, "conn") == 0) {
             pthread_mutex_lock(&args->mutex);
             if (!args->connected) {
@@ -131,6 +206,9 @@ void *sender_thread(void *arg) {
 
             continue;
         }
+        // --------------------------------------------------------------------
+        // All other commands/messages → forward to server
+        // --------------------------------------------------------------------
         else {
             udp_socket_write(args->sd, &args->server_addr, client_request, BUFFER_SIZE);
         }
@@ -138,21 +216,37 @@ void *sender_thread(void *arg) {
     return NULL;
 }
 
+// ============================================================================
+// listener_thread
+// ----------------------------------------------------------------------------
+// Continuously receives UDP packets from the server.
+//
+// It prints Packets ONLY IF the client is currently connected.
+//
+// Special messages from server trigger forced disconnection:
+//
+//   "You have been removed from the chat"
+//   "You have been disconnected from the chat due to inactivity"
+//
+// Injection cannot happen since the message sent by other clients would be
+// in the form "name: message" so it cannot match the special messages
+// ============================================================================
 void *listener_thread(void *arg) {
     thread_args_t *args = (thread_args_t *)arg;
     struct sockaddr_in responder_addr;
+    
     char server_response[BUFFER_SIZE];
 
     while (1) {
         int rc = udp_socket_read(args->sd, &responder_addr, server_response, BUFFER_SIZE);
         if (rc > 0) {
             server_response[rc] = '\0';
-
+            // Read connection state safely
             pthread_mutex_lock(&args->mutex);
             bool is_connected = args->connected;
             pthread_mutex_unlock(&args->mutex);
 
-            // Always read packets, but only display if connected
+            // Display incoming message if connected
             if (is_connected) {
                 pthread_mutex_lock(&ncurses_mutex);
                 wprintw(win_output, "%s\n", server_response);
@@ -160,6 +254,9 @@ void *listener_thread(void *arg) {
                 pthread_mutex_unlock(&ncurses_mutex);
             }
 
+            // ----------------------------------------------------------------
+            // Forced disconnect by server (kick or inactivity)
+            // ----------------------------------------------------------------
             if ((strcmp(server_response,"You have been removed from the chat") == 0)|| (strcmp(server_response, "You have been disconnected from the chat due to inactivity") == 0)) {
                 pthread_mutex_lock(&args->mutex);
                 args->connected = false;
@@ -175,21 +272,41 @@ void *listener_thread(void *arg) {
     return NULL;
 }
 
+// ============================================================================
+// main()
+// ----------------------------------------------------------------------------
+// Sets up socket, initializes ncurses UI, and starts the three threads.
+//
+// Layout:
+//   ┌─────────────────────────┐
+//   │       win_output        │ <-- messages from server
+//   │       scrollable        │
+//   └─────────────────────────┘
+//   ┌─────────────────────────┐
+//   │       win_input         │ <-- user input prompt
+//   └─────────────────────────┘
+//
+// ============================================================================
 int main(int argc, char *argv[]) {
     int port = 0;  // default to random available port
 
+    // special admin mode if needed  (conn$ admin)
     if (argc >= 2) {
-        if (strcmp(*argv, "admin") == 0) {
+        if (strcmp(argv[1], "admin") == 0) {
             port = 6666;
         }
     }
+
+    // Create UDP socket
     int sd = udp_socket_open(port);
     assert(sd > -1);
 
+    // Connect to server IP/port
     struct sockaddr_in server_addr;
     int rc = set_socket_addr(&server_addr, "127.0.0.1", SERVER_PORT);
     assert(rc == 0);
 
+    // Initialize thread arguments
     thread_args_t args = { 
         .sd = sd,
         .server_addr = server_addr,
@@ -197,7 +314,7 @@ int main(int argc, char *argv[]) {
     };
     pthread_mutex_init(&args.mutex, NULL);
 
-    // Initialize ncurses
+    // Initialize ncurses UI
     initscr();
     cbreak();
     noecho();
@@ -205,24 +322,34 @@ int main(int argc, char *argv[]) {
 
     int rows, cols;
     getmaxyx(stdscr, rows, cols);
+
     #define INPUT_HEIGHT 3
+
     win_output = newwin(rows - INPUT_HEIGHT, cols, 0, 0);
     win_input  = newwin(INPUT_HEIGHT, cols, rows - INPUT_HEIGHT, 0);
+
     scrollok(win_output, TRUE);
+
     box(win_input, 0, 0);
     wrefresh(win_input);
     wrefresh(win_output);
 
+    // ---- Thread creation ----
     pthread_t sender_tid, listener_tid, init_tid;
+
+    // First, run the initial connection loop
     pthread_create(&init_tid, NULL, initial_thread, &args);
     pthread_join(init_tid, NULL);
+
+    // After connection, start sender + listener
     pthread_create(&sender_tid, NULL, sender_thread, &args);
     pthread_create(&listener_tid, NULL, listener_thread, &args);
 
     pthread_join(sender_tid, NULL);
     pthread_join(listener_tid, NULL);
 
+    // Cleanup
     close(sd);
-    endwin(); // End ncurses
+    endwin();
     return 0;
 }
