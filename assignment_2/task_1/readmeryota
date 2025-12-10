@@ -1,14 +1,290 @@
 Introductory tasks - 
 These tasks were meant to make us understand how the server and client opens ports.
 sd = socket descriptor, this is how we keep track of all the info needed to identify a socket. (client_addr, IP etc)
-We also looked into how the client takes info from the terminal (user input) and how to send those to the server.
+We also looked into how the client takes info from the terminal (user input) and how to send those to the server. We utilize this with the sender thread of the client sending messages over to the server as well as setting the client port numbers for kick$ function.
 
 Server - 
 The requirement was to make a multi-thread server that has a listener thread and a thread that takes care of all the work implementing a lock for mutual exclusion in critical areas
 I have decided to make all the server response to the client request before making it multithreaded
 Firstly, I made a linked list to keep track of all the client name, sockaddr_in, with the server at index 0 to make it easy to traverse through the list
 The way I have implemented mute is to have each Node of the linked list keep track of all the other Nodes it is "blocked by" in another Linked List type BlockNode which has Node and next as parameters. Making each Node store which Nodes they are "blocked by" makes it better for effeciency because we will be accessing the same Linked list to check wether we should send a msg to the other client or not making it more effecient in terms of memory accessing.
-After I have implemented my Linked Lists, I implemented the threads
-I split the threads into 2 pieces, one of which is the listener thread which has udp_socket_read, which is a blocking function, gets an input from the sender thread of the client to spawn a worker thread of the server for each message.
+After I have implemented my Linked Lists, I implemented the threads:
+I split the threads into 3 pieces, one of which is the listener thread which has udp_socket_read, which is a blocking function, gets an input from the sender thread of the client to spawn a worker thread of the server for each message.
 A worker thread spawns and does its work while stalling when they couldn't access the lock.
 Listener thread is free to make as many worker threads as they want. Fairness is not considered in this part of our assignment.
+The last thread is the cleanup thread, this is for the extension.
+
+Client - 
+The requirement was to make a minimum 2 thread client with a sender thread that sends user input message to the server and a listener thread that takes in messages from the server and display it
+I decided to make 3 strings - initial thread, sender thread, and listener thread
+initial thread -  this thread is for initial connection set up. it makes sure that the entered name is valid and unique as well as it having proper connection to the server, as I have a udp-read instruction, which is a blocking instruction, in there making it impossible to activate listener and sender threads without initializing a proper connection first.
+sender thread - this thread is for sending data over to the server. This thread also determines wether the data should be sent or not. We have 2 checks for connection with server which is a boolean logic on the client side that determines wether we should send the data over to the server and a boolean logic on the server side that determines wether global messages and such should be send to the client.
+listener thread - this thread is for receiving data from the server. Most of the messages that get printed on the terminal of the client is made at the server, and when a certain message from the server is received, this thread changes variables like the boolean logic for connection.
+The required user interface is also implemented here. I use ncurses to split the terminal up into 2 sections, 1 for displaying the messages and 1 for users inputting the commands.
+
+Proposed extensions: I have added a global circular buffer for global history to keep track of messages sent with say$, and a private circular buffer for private history to keep track of messages sent and received with sayto$. I've made the circular buffer tracker for the private one a parameter in the Node of the linked list. I have a separate global circular buffer, but I could use the circular buffer that is assigned to the server node of the linked list for data tidiness.
+I also implemented the remove inactive clients. I added a tracker for the last connection time as a parameter in the Node of the linked list. I have a 3rd thread in server that wakes up every 60 seconds to check the last connection time and sends warnings to the client or disconnect them if it has been too long.
+Further extensions: I have added reconnection with state preservation. I did this by adding a is_connected boolean in the linked list of the Nodes. I've determined that it is better to just keep the clients that disconnect inside the linked list and have a boolean to keep track of which ones are connected. So kicks or disconnects just turn this boolean false.
+Effecient data structures will be kind of implemented when I make the global history circular buffer into the circular buffer of the server Node. (Saying this to make the professor know that some effort was made to make the performance better from a data effeciency side)
+
+
+
+
+Implementation Summary
+1. Introductory Tasks
+
+The introductory tasks were designed to help us understand how UDP clients and servers establish communication using sockets.
+
+The variable sd (socket descriptor) is used to reference the socket and internally stores all the information needed to identify the communication endpoint (e.g., sockaddr_in, IP address, port number).
+
+We also explored how the client takes user input from the terminal, formats it, and sends it to the server.
+This is the same mechanism used later by the sender thread, which forwards user commands to the server.
+
+I also experimented with assigning client ports, which later became important for identifying the admin client for the kick$ function.
+
+These tasks provided the foundation for understanding how the full chat system communicates.
+
+2. Server Implementation
+
+The server was required to be multithreaded, with:
+
+A listener thread, and
+
+Worker threads for processing client requests,
+
+A cleanup thread for the inactivity extension.
+
+Shared structures must be protected using mutual exclusion locks.
+
+2.1 Linked List of Clients
+
+I implemented a linked list to store:
+
+client name
+
+client address (sockaddr_in)
+
+mute (block) information
+
+last active time
+
+private message history buffer
+
+connection status
+
+I placed a dummy server node at index 0, which simplifies traversal and makes some bookkeeping cleaner.
+
+2.2 Mute Implementation
+
+Each client node maintains a secondary linked list (BlockNode) containing pointers to the nodes representing clients they have muted.
+
+This design has two advantages:
+
+The mute data is stored with the client itself.
+
+When broadcasting messages, we only need to check the mute list of each recipient, which is efficient and localized.
+
+This avoids scanning the entire client list for mute checks and reduces unnecessary memory access.
+
+2.3 Thread Structure
+Listener Thread
+
+Calls udp_socket_read (a blocking function).
+
+Receives commands from clients.
+
+Spawns a worker thread for each incoming request.
+
+Is free to continue listening immediately after spawning each worker thread.
+
+Fairness between clients is not required for this assignment.
+
+Worker Threads
+
+Perform the actual processing of client requests (conn$, say$, sayto$, rename$, etc.).
+
+Acquire locks when modifying shared structures like the client linked list.
+
+Stall if they cannot obtain the lock immediately.
+
+Cleanup Thread (Extension)
+
+Wakes every 60 seconds.
+
+Checks the last active time of all clients.
+
+Sends warnings or disconnects inactive clients if they exceed the inactivity threshold.
+
+This thread is only responsible for the removal / monitoring extension.
+
+3. Client Implementation
+
+The client was required to have at least two threads; I implemented three:
+
+3.1 Initial Connection Thread
+
+This thread performs all connection setup:
+
+Ensures the entered name is valid and not already in use.
+
+Sends the conn$ request.
+
+Waits for server confirmation (udp_socket_read, which is blocking).
+
+The sender and listener threads are only spawned after a successful connection to avoid race conditions.
+
+3.2 Sender Thread
+
+Reads input from the user.
+
+Formats the request message.
+
+Checks whether the client is currently connected before sending.
+
+Uses a local boolean flag (client-side).
+
+The server also maintains a connection flag to determine whether global messages should be delivered.
+
+This thread is responsible for all outgoing communication.
+
+3.3 Listener Thread
+
+Waits for server responses.
+
+Displays messages to the user.
+
+Updates client-side state variables depending on server messages (e.g., connection established, kicked, renamed).
+
+Responsible for most visible output on the client interface.
+
+3.4 User Interface
+
+I implemented the required UI using ncurses:
+
+The screen is split into two sections:
+
+one for displaying chat output
+
+one for accepting user input
+
+This allows incoming messages to appear even while typing, as required.
+
+4. Proposed Extensions Implemented
+4.1 PE1 — Message History
+
+I implemented:
+
+A global circular buffer storing the history of all say$ messages.
+
+A private circular buffer for each client storing private (sayto$) messages.
+
+The private buffer is stored inside each client node of the linked list.
+
+While I currently keep the global buffer separate, it could be integrated into the “server node” to improve data organization.
+
+4.2 PE2 — Remove Inactive Clients
+
+I implemented inactivity detection by:
+
+Adding last_active_time as a field in each client node.
+
+Creating a dedicated cleanup/inactivity thread (third server thread).
+
+Every 60 seconds, this thread:
+
+checks each client's timestamp
+
+sends warnings
+
+disconnects clients who remain inactive too long
+
+5. Additional Extensions Implemented
+5.1 Reconnection with State Preservation
+
+I added a boolean is_connected field in each client node.
+
+Instead of deleting nodes on disconnect or kick:
+
+The node remains in the list.
+
+The is_connected flag becomes false.
+
+This preserves:
+
+private message history
+
+mute state
+
+name
+
+other client attributes
+
+When the user reconnects, the same node is reused.
+
+5.2 Efficient Data Structures
+
+I have begun improving structure efficiency by:
+
+Reorganizing message history into the server node’s circular buffer (for cleaner and more efficient data access).
+
+This demonstrates awareness of performance and data structure optimization beyond basic requirements.
+
+
+////////////////////////////////////////////////////////////////////////////////////////
+Intro
+The following implementation provides a complete multithreaded UDP-based chat system consisting of a server and client. The server maintains a linked list of clients, handles concurrent message processing through worker threads, and maintains global and per-client circular buffers for message history. It also implements muting, private messages, administrative controls, and inactivity-based disconnection. The client uses three threads and an ncurses interface to handle initial connection establishment, message sending, and message listening concurrently.
+
+The code below is structured into the following components:
+
+Server
+
+UDP socket utilities
+
+Linked list for client records
+
+Block/mute list
+
+Circular buffers (global + per-client)
+
+Worker thread for handling commands
+
+Listener thread for spawning workers
+
+Cleanup thread for inactivity monitoring
+
+Client
+
+ncurses-based UI (input/output windows)
+
+Initial connection thread
+
+Sender thread
+
+Listener thread
+
+Support for reconnection and server-driven disconnection
+
+Together, these elements form a robust and extensible chat platform with reliable handling of concurrency, synchronization, and user state.
+
+Conclusion
+This implementation successfully delivers a complete multithreaded chat application with both required features and multiple extensions. The server efficiently handles concurrent requests using worker threads protected by mutexes, while the client provides a responsive UI through separate sender, listener, and initialization threads. Custom data structures—such as linked lists and circular buffers—enable efficient management of client state, message histories, and mute lists. The addition of reconnection support, inactivity cleanup, and history preservation enhances the robustness of the system beyond baseline requirements.
+
+Overall, the code demonstrates strong adherence to concurrency principles, network programming techniques, and modular design, resulting in a flexible and extensible chat system.
+
+Feature	Requirement	Implemented	Notes
+UDP socket communication	Yes	✔️	Server listens on port 12000; client binds to available port
+Client threads	≥2 threads	✔️ (3 threads)	Initial, sender, listener
+Server threads	Listener + worker	✔️ (3 threads)	Listener, worker pool, cleanup thread
+Shared client list	Track clients with names & addresses	✔️	Linked list with state fields
+Muting/mute list	Mute/unmute specific users	✔️	Via per-node BlockNode linked lists
+say$ global broadcast	Deliver to all clients	✔️	Respects mute list; added to global buffer
+sayto$ private message	Yes	✔️	Stored in both sender/receiver history
+rename$	Rename existing user	✔️	Thread-safe update
+disconn$	Disconnect client	✔️	Marks connected=false
+kick$	Admin removes user	✔️	Admin validated by port=6666
+Ncurses client UI	Split screen	✔️	Input + output windows
+Global history (PE1)	Store last 15 say$ messages	✔️	Implemented with circular buffer
+Private history (PE1)	Per user	✔️	Each Node tracks own buffer
+Inactivity removal (PE2)	Ping + timeout	✔️	Cleanup thread checks last_active
+Reconnection	Not required	✔️ Extended	Restores state, history, mute lists
+Efficient structures	Optional	✔️ Partial	Unified history into server node buffer

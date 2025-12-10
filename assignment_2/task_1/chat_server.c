@@ -9,7 +9,6 @@
     #include <arpa/inet.h>
     #include <assert.h>
     Node* server = NULL;
-    CircularBuffer* cb = NULL;
     pthread_mutex_t list_mutex = PTHREAD_MUTEX_INITIALIZER;
 
     void* worker_thread(void* arg) {
@@ -59,13 +58,13 @@
                 }
                 udp_socket_write(pkt->sd, &pkt->client_addr, server_reply, BUFFER_SIZE);
                 udp_socket_write(pkt->sd, &pkt->client_addr, "Global history:\n", BUFFER_SIZE);
-                pthread_mutex_lock(&cb->lock);
-                for (int i = 0; i < cb->count; i++) {
-                    int idx = (cb->head + i) % CB_SIZE;
-                    udp_socket_write(pkt->sd, &pkt->client_addr, cb->data[idx], BUFFER_SIZE);
+                pthread_mutex_lock(&server->history_lock);
+                for (int i = 0; i < server->hist_count; i++) {
+                    int idx = (server->hist_head + i) % CB_SIZE;
+                    udp_socket_write(pkt->sd, &pkt->client_addr, server->history[idx], BUFFER_SIZE);
                 }
                 udp_socket_write(pkt->sd, &pkt->client_addr, "------------------", BUFFER_SIZE);
-                pthread_mutex_unlock(&cb->lock);
+                pthread_mutex_unlock(&server->history_lock);
                 if (existing_user) {
                     udp_socket_write(pkt->sd, &pkt->client_addr, "Private history:\n", BUFFER_SIZE);
                     pthread_mutex_lock(&sender->history_lock);
@@ -83,7 +82,7 @@
         }
         else if (strcmp(instruction, "say") == 0) {
             snprintf(server_reply, BUFFER_SIZE, "%.100s: %.900s\n", sender->name, message);
-            cb_push(cb, server_reply);
+            node_cb_push(server, server_reply);
             pthread_mutex_lock(&list_mutex);
             Node* cur = server;
             while (cur != NULL) {
@@ -109,7 +108,7 @@
             pthread_mutex_lock(&list_mutex);
             Node* receiver = find_node(server, name);
             BlockNode* cur = sender->blocked_by;
-            if (receiver != NULL) {
+            if ((receiver != NULL) && (strcmp(receiver->name, "Server") == 0)) {
                 bool blocked = false;
                 while (cur != NULL) {
                     if (cur->client == receiver) {
@@ -273,9 +272,6 @@
         getsockname(sd, (struct sockaddr *)&server_addr, &addr_len);
         server = create_node("Server", server_addr);
         assert(sd > -1);
-
-        cb = malloc(sizeof(CircularBuffer));
-        cb_init(cb);
 
         printf("Server is listening on port %d\n", SERVER_PORT);
 

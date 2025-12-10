@@ -179,10 +179,8 @@ int main(int argc, char *argv[]) {
     int port = 0;  // default to random available port
 
     if (argc >= 2) {
-        port = atoi(argv[1]);
-        if (port <= 0 || port > 65535) {
-            fprintf(stderr, "Invalid port number. Using random port.\n");
-            port = 0;
+        if (strcmp(*argv, "admin") == 0) {
+            port = 6666;
         }
     }
     int sd = udp_socket_open(port);
