@@ -1,4 +1,5 @@
 UDP Chat System
+Ryota Hosokawa (CID:02591705) Seiji Ethan Cann (CID:)
 1. Project Overview: 
 This project implements a multithreaded UDP chat system in C with a terminal-based client, consisting of a central server and multiple clients. It demonstrates core concepts of concurrency, synchronization, and UDP communication by allowing multiple users to join a chat, send messages, and interact in real time. Both the server and clients use multiple threads and shared data structures to manage communication safely and efficiently.
 2. Short Description
@@ -13,6 +14,7 @@ Client:
 Server:
 ・Open a server port
 ・Maintains a linked list of connected users with parameters such as names or connection status
+・Maintains another linked list of disconnected users with the same parameters as the connected users linked list
 ・Stores global and per-user message history using circular buffers.
 ・Three-thread architecture
     ・listener_thread – Listens for UDP packets from clients and Spawns a worker thread for each received packet.
@@ -21,3 +23,91 @@ Server:
 ・Manages user activity and automatically disconnects inactive clients.
 ・Handles commands such as conn, say, sayto, disconn, mute, unmute, rename, ret-ping, and kick (admin).
 3. Features Implemented
+Client:
+Feature             | Implemeted | Notes
+UDP Port (Random)   | Full       |When the user types ./client, it is default to port number 0 which will be assigned to a random available port, or when it is ./client admin, then we get port number 6666
+Sender thread       | Full       |Has check from client side of wether the client is connected and sends message to server
+Listener thread     | Full       |Continuously receives packet from server and display on the window, special messages from the server disconnect the client from the client side, injection is prevented since all messages sent from a client would be in the form of "user: message", meaning the "user:" part will make it impossible for a client to make another client using a command that is not kick$
+Initial thread      | Full       |Thread for making the initial connection, the other threads don't get spawned until this thread is complete and a proper connection is made
+Supporting Requests | Full       |Supports request made from the user by sending requests to the server if connected and an error message if not
+User Interface      | Full       |Split the terminal into user input and displaying chat using ncurses, make the terminal bigger size to see all history
+Server:
+UDP Port (12000)    | Full       |When ./server or ./server & is typed, a server port is opened with 12000 as the port number
+Listener Threads    | Full       |Listens for requests sent by the sender thread of the client and spawn a worker thread for each of these requests
+Linked List data    | Full       |Linked List implemented with server being the first Node of the Linked List, A second Linked List with thre same paramters for disconnected clients and a 3rd one for tracking mute are also implemented
+Responding Thread   | Full       |For each incoming request a response thread(worker thread) is spawned and updates the linked list, circular buffer, and/or reply to the client. *Note I did not make separate threads for each instruction as recommended by the assignment and made 1 big worker thread
+conn$               | Full       |Used for initial connection and reconnection, conn$ Name makes a new Node in the Linked List with Node->name = Name, conn$ checks the LinkedLists and reconnects the user and sends a private message history, both of these sends global history to the client
+say$                | Full       |say$ message broadcasts messages to all users except the ones that have the sender muted and disconnected users, this message is stored into global history buffer as well
+sayto$              | Full       |sayto$ name message sends private message to receiver unless muted or disconnected and stores messages into private history buffer as well
+disconn$            | Full       |disconn$ changing bool connected to false, and moves the Node to the LinkedList of disconnected users
+mute$               | Full       |mute$ name updates blocked_by BlockNode linked list. Adds a BlockNode with parameters, Node of the sender and next, to the user being blocked.(reverse mute logic) System check to not add same user to BlockNode more than once
+unmute$             | Full       |unmute$ Name scans the BlockNode of user with Name, and removes the sender from it if it exists (reverse mute logic so also reverse unmute logic) muting or unmuting of a disconnected Node cannot happen
+rename$             | Full       |rename$ Name uniqueness of the name is checked and the name is updated on the LinkedList if it is unique (Cannot be the same as any users including disconnected)
+kick$               | Full       |kick$ Name if the sender is admin(port 6666) remove the specified client
+
+Synchronization     | Full       |reader–writer lock is implemented for the Linked Lists (not for the circular buffer since I didn't feel it was necessary as there aren't going to be as many threads fighting for the lock)
+
+Extensions:
+Proposed Extension 1| Full       |Circular buffer structure was added to store global messages on say$ commands. Later changed a bit to make data structure better for reconnection with state preservation (Further Enhancement 1)
+Proposed Extension 2| Full       |Inactive clients are removed by a clean up thread in server (sends ping$ to client, client can either do any commands or do ret-ping$ to just update their last connection time, reconnection is still with conn$) the clients do not disconnect on 6 minutes exactly, they will receive a warning 5-6min after being inactive and disconnected 6-7min after being inactive.
+Further Enhancement | Partial    |Reconnection with state preservation is implemented by moving disconnected users to a different Linked List and looking through there when client requests to reconnect. A circular buffer has been added to the structure of Nodes of the Linked List to maintain private chat history. Since server is the first Node in the main Linked List, we make its circular buffer the global chat history for better data usage.
+Others              | Partial    |additional thread in client for safe connection, name uniqueness, Better data structure, 
+
+4. How to compile & run
+Server:
+gcc chat_server.c -o server -lpthread
+./server or ./server &
+
+Client:
+open new terminal for each client
+gcc chat_client.c -o client -lncurses -lpthread
+./client or ./client admin
+./client makes the port a random available port
+./client admin makes the port 6666 the admin port
+
+Example:
+./client              ./client                           ./client admin
+conn$ c1              conn$ c2                           conn$ admin111
+say$ hi
+sayto$ c2 hello
+mute$ c2              sayto$ c1 hi c1
+unmute$ c2            say$ can you hear me c1
+rename$ c3            sayto$ c3 you changed your name
+                                                         kick$ c3
+conn$
+
+5. Architecture & Design 
+Data Structures:
+・Linked Lists
+    ・Nodes
+        ・name
+        ・socketaddr_in
+        ・next
+        ・BlockNode
+        ・last_active
+        ・connected
+        ・circular buffer
+        ・circular buffer lock
+    ・BlockNodes
+        ・Node
+        ・next
+
+6. Explanation of design choices
+For the sake of perserving user data and socket informations, we made it kind of impossible for a client to be completely removed from the servers data tree unless the process terminates. Thus there is no functions for freeing memory space used by the client that is actually used, although some of it is still left in udp.h from our first design with total disconnection. When the process is terminated the memory is freed anyways so we didn't really find a reason to force it.
+
+Server Node holding global history. The data structure of the Nodes makes it so that there exists a circular buffer for every Node. The Server Node obviously wouldn't have a private chat history so we decided to make this the global buffer.
+
+I have added checks for unexpected input from the user, like implementing a initial thread in Client to make sure the Client is connected (conn$) first before they do anything else.
+
+Made all types of disconnection, disconn$, kick$, inactivity have the same reconnection logic for simplicity.
+
+7. Considered Cases
+・Name being multi worded - client and rename$ in server have checks to not let the user have a multiworded name
+・Multiple clients with same name - conn$ and rename$ in server has a check to test the name against all users (connected and disconnected)
+・Muting the same user multiple times - Since all names are unique, we have a check in mute$ to see if the user has already been muted
+・Muting and Unmuting a disconnected user - Muting and Unmuting a disconnected user cannot happen
+・Observed that sometimes the UDP socket buffer is very unreliable and the listener thread can pick up the same request (Sometimes conn$ needs to be typed twice before reconnecting)
+・Multi-level check for disconnection - We have a check on the client side and server side to make sure the client does not get anything from the server on their screen while disconnected
+・Ensuring initial connection with response from Server - We separated the Initial connection logic with the sender thread logic so that we won't have a situation where the listener thread activates before the server allows the user to connect with a proper name
+・Client doing sayto$ Server message - Client cannot type a sayto$ message to Server and will just get an error message.
+・Global history with message from muted client on reconnection - the global history does not care wether a certain client has another client muted, it will store the say$ message in the circular buffer anyways. That means the reutrning client may see messages from a muted client that broadcasted its message with say$ in the global history upon reconnection. We deemed this an unimportant problem.

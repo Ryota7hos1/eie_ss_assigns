@@ -1,33 +1,31 @@
-// ============================================================================
-// Implements a multithreaded UDP chat server with:
-//   - Listener thread → spawns worker threads for each packet
-//   - Worker threads → handle commands (conn, say, sayto, mute, kick…)
-//   - Cleanup thread → removes inactive clients
-//   - Linked-list user registry with per-user circular buffers
-//   - Mute/unmute via per-user BlockNode lists
-// ============================================================================
+// Multithreaded UDP chat server with:
+//   Listener thread - spawns worker threads for each packet
+//   Worker threads - handle commands (conn, say, sayto, mute, kick…)
+//   Cleanup thread - removes inactive clients
+//   Linked-list user registry with per-user circular buffers
+//   Mute/unmute via per-user BlockNode lists
+    #define _XOPEN_SOURCE 700    
     #include <stdio.h>
     #include <stdlib.h>
     #include <ctype.h>
     #include <stdbool.h>
-    #include "udp.h"
-    #include <pthread.h>    
+    #include "udp.h"   
     #include <string.h>
     #include <unistd.h>
     #include <arpa/inet.h>
     #include <assert.h>
+    #include <pthread.h> 
 
     // Global pointer to the head of the linked list of clients.
     // The server itself is stored as Node index 0.
     Node* server = NULL;
+    Node* dis_node = NULL;
     // Mutex protecting the linked list and all Node metadata.
-    pthread_mutex_t list_mutex = PTHREAD_MUTEX_INITIALIZER;
+    pthread_rwlock_t rwlock = PTHREAD_RWLOCK_INITIALIZER;
 
-    // ============================================================================
-    // WORKER THREAD
+    // Worker Thread
     // Each packet received by the listener spawns a worker thread.
     // This isolates expensive operations and prevents blocking the listener.
-    // ============================================================================
     void* worker_thread(void* arg) {
         Packet* pkt = (Packet*)arg; // Data passed from the listener thread
 
@@ -39,26 +37,27 @@
         // Parse client packet as "instruction$ message"
         sscanf(pkt->message, "%1023[^$]$ %1023[^\n]", instruction, message);
         // Identify the sender in the linked list based on sockaddr_in
+        pthread_rwlock_rdlock(&rwlock);
         Node* sender = find_node_addr(server, pkt->client_addr);
+        pthread_rwlock_unlock(&rwlock);
         // Identify the sender in the linked list based on sockaddr_in
         if (sender != NULL) {
-            pthread_mutex_lock(&list_mutex);
+            pthread_rwlock_wrlock(&rwlock);
             sender->last_active = time(NULL);
-            pthread_mutex_unlock(&list_mutex);
+            pthread_rwlock_unlock(&rwlock);
         }
 
-        // ========================================================================
-        // CONNECTION HANDLER: conn$ name
+        // Connection Handler: conn$ name
         // Handles:
         //   • new user connecting
         //   • returning user reconnecting
-        //   • duplicate name rejection
-        // ========================================================================
+        //   • duplicate/invalid name rejection
         if (strcmp(instruction, "conn") == 0) {
             bool existing_user = false;
             bool name_duplicate = false;
             // Check if name already exists
             Node* cur = server;
+            pthread_rwlock_rdlock(&rwlock);
             while (cur != NULL) {
                 if (strcmp(cur->name, message) == 0) {
                     name_duplicate = true;
@@ -66,9 +65,21 @@
                 }
                 cur = cur->next;
             }
+            Node* dis_list_node = find_node_addr(dis_node, pkt->client_addr);
+            pthread_rwlock_unlock(&rwlock);
+            if (dis_list_node != NULL) {
+                sender = dis_list_node;
+                pthread_rwlock_wrlock(&rwlock);
+                change_node_conn(&dis_node, &server, dis_list_node, true);
+                pthread_rwlock_unlock(&rwlock);
+                existing_user = true;
+            }
+            if (sender!= NULL) {
+                existing_user = true;
+            }
             // If name is unique OR sender already known (reconnect)
-            if (!name_duplicate || sender != NULL) {
-                pthread_mutex_lock(&list_mutex);
+            if (!name_duplicate || existing_user) {
+                pthread_rwlock_wrlock(&rwlock);
                 // New client, not previously connected
                 if (sender == NULL) {
                     push_back(&server, message, pkt->client_addr);
@@ -83,7 +94,7 @@
                     sender->last_active = time(NULL);
                     existing_user = true;
                 }
-                pthread_mutex_unlock(&list_mutex);
+                pthread_rwlock_unlock(&rwlock);
                 if (strcmp(message, "") == 0) {
                     snprintf(server_reply, BUFFER_SIZE, "Hi, you have successfully connected to the chat\n");
                 }
@@ -93,7 +104,7 @@
                 }
                 // Send the greeting
                 udp_socket_write(pkt->sd, &pkt->client_addr, server_reply, BUFFER_SIZE);
-                // ==================== GLOBAL HISTORY ====================
+                // Global History
                 udp_socket_write(pkt->sd, &pkt->client_addr, "Global history:\n", BUFFER_SIZE);
                 pthread_mutex_lock(&server->history_lock);
                 for (int i = 0; i < server->hist_count; i++) {
@@ -102,7 +113,7 @@
                 }
                 udp_socket_write(pkt->sd, &pkt->client_addr, "------------------", BUFFER_SIZE);
                 pthread_mutex_unlock(&server->history_lock);
-                // ==================== PRIVATE HISTORY ====================
+                // Private History
                 if (existing_user) {
                     udp_socket_write(pkt->sd, &pkt->client_addr, "Private history:\n", BUFFER_SIZE);
                     pthread_mutex_lock(&sender->history_lock);
@@ -118,16 +129,14 @@
                 udp_socket_write(pkt->sd, &pkt->client_addr, "Duplicate", BUFFER_SIZE);
             }
         }
-        // ========================================================================
-        // GLOBAL MESSAGE: say$ message
+        // Global Message: say$ message
         // Broadcast to all clients except those who have muted the sender.
-        // ========================================================================
         else if (strcmp(instruction, "say") == 0) {
             snprintf(server_reply, BUFFER_SIZE, "%.100s: %.900s\n", sender->name, message);
             // Push into global history (stored in server node)
-            node_cb_push(server, server_reply);
+            node_cb_push(server, server_reply); // mutex inside function
             
-            pthread_mutex_lock(&list_mutex);
+            pthread_rwlock_rdlock(&rwlock);
             Node* cur = server;
             while (cur != NULL) {
                 bool blocked = false;
@@ -145,18 +154,22 @@
                 }
                 cur = cur->next;
             }
-            pthread_mutex_unlock(&list_mutex);
+            pthread_rwlock_unlock(&rwlock);
         }
-        // ========================================================================
-        // PRIVATE MESSAGE: sayto$ target message
+        // Private Message: sayto$ target message
         // Delivered only to a specific user.
-        // ========================================================================
         else if (strcmp(instruction, "sayto") == 0) {
             char name[BUFFER_SIZE-530], msg[BUFFER_SIZE-512];
             sscanf(message, "%[^ ] %[^\n]", name, msg);
             
-            pthread_mutex_lock(&list_mutex);
+            pthread_rwlock_rdlock(&rwlock);
             Node* receiver = find_node(server, name);
+            if (strcmp(receiver->name, "Server") == 0) {
+                snprintf(server_reply, BUFFER_SIZE, "Can't send the server a private message\n");
+                pthread_rwlock_unlock(&rwlock);
+                udp_socket_write(pkt->sd, &sender->client_ad, server_reply, BUFFER_SIZE);
+                return NULL;
+            }
             
             // Check if sender is muted by receiver
             BlockNode* cur = sender->blocked_by;
@@ -171,37 +184,32 @@
                 }
                 if (!blocked && receiver->connected) {
                     snprintf(server_reply, BUFFER_SIZE, "%.100s: %.900s\n", sender->name, msg);
-                    pthread_mutex_unlock(&list_mutex);
+                    pthread_rwlock_unlock(&rwlock);
                     udp_socket_write(pkt->sd, &receiver->client_ad, server_reply, BUFFER_SIZE);
                     node_cb_push(sender, server_reply);///locking is done in the funciton itself
                     node_cb_push(receiver, server_reply);
                 }
                 else {
-                    pthread_mutex_unlock(&list_mutex);
+                    pthread_rwlock_unlock(&rwlock);
                 }
             }
             else {
-                pthread_mutex_unlock(&list_mutex);
+                pthread_rwlock_unlock(&rwlock);
             }
         }
-        // ========================================================================
-        // DISCONNECT: disconn$
-        // ========================================================================
+        // Disconnect: disconn$
         else if (strcmp(instruction, "disconn") == 0) {
-            snprintf(server_reply, BUFFER_SIZE, "Disconnected. Bye!\n");
+            snprintf(server_reply, BUFFER_SIZE, "Disconnected. Bye!");
             udp_socket_write(pkt->sd, &pkt->client_addr, server_reply, BUFFER_SIZE);
-            
-            pthread_mutex_lock(&list_mutex);
-            disconnect_node(&server, sender);
-            pthread_mutex_unlock(&list_mutex);
+            pthread_rwlock_wrlock(&rwlock);
+            change_node_conn(&server, &dis_node, sender, false);
+            pthread_rwlock_unlock(&rwlock);
         }    
-        // ========================================================================
-        // MUTE / UNMUTE
-        // ========================================================================
+        // Mute / Unmute
         else if (strcmp(instruction, "mute") == 0) {
-            pthread_mutex_lock(&list_mutex);
-            Node* target = find_node(server, message);
             bool alr_muted = false;
+            pthread_rwlock_wrlock(&rwlock);
+            Node* target = find_node(server, message);
             if (target != NULL) {
                 BlockNode* target_blocknode = target->blocked_by;
                 while (target_blocknode != NULL) {
@@ -213,22 +221,20 @@
             if (!alr_muted)
                 push_back_blocknode(sender, target);
             }
-            pthread_mutex_unlock(&list_mutex);
+            pthread_rwlock_unlock(&rwlock);
         }
         else if (strcmp(instruction, "unmute") == 0) {
-            pthread_mutex_lock(&list_mutex);
+            pthread_rwlock_wrlock(&rwlock);
             Node* target = find_node(server, message);
             if (target != NULL) {
                 remove_blocknode(sender, target);
             }
-            pthread_mutex_unlock(&list_mutex);
+            pthread_rwlock_unlock(&rwlock);
         }
-        // ========================================================================
-        // RENAME USER: rename$ newname
-        // ========================================================================
+        // Rename User: rename$ newname
         else if (strcmp(instruction, "rename") == 0) {
-            pthread_mutex_lock(&list_mutex);
             bool name_exists = false;
+            pthread_rwlock_wrlock(&rwlock);
             Node* cur = server;
             // Check if name is already in use
             while (cur != NULL) {
@@ -238,6 +244,19 @@
                 }
                 cur = cur->next;
             }
+            cur = dis_node;
+            char name[BUFFER_SIZE];
+            char extra[BUFFER_SIZE];
+            int n = sscanf(message, "%s %s", name, extra);
+            if (!name_exists) {
+                while (cur != NULL) {
+                    if (strcmp((cur->name), message) == 0) {
+                        name_exists = true;
+                        break;
+                    }
+                    cur = cur->next;
+                }
+            }
             if (!name_exists) {
                 strncpy(sender->name, message, BUFFER_SIZE);
                 sender->name[BUFFER_SIZE - 1] = '\0';
@@ -246,51 +265,48 @@
             else {
                 snprintf(server_reply, BUFFER_SIZE, "The name is already in use");
             }
-            pthread_mutex_unlock(&list_mutex);
+            if (n == 2) {
+                snprintf(server_reply, BUFFER_SIZE, "Please enter a valid name");
+            }
+            pthread_rwlock_unlock(&rwlock);
             udp_socket_write(pkt->sd, &pkt->client_addr, server_reply, BUFFER_SIZE);
         }
-        // ========================================================================
-        // ADMIN KICK: kick$ username
+        // Admin Kick: kick$ username
         // Only allowed if sender port == 6666
-        // ========================================================================
         else if (strcmp(instruction, "kick") == 0) {
             if (ntohs(sender->client_ad.sin_port) == 6666) {
-                pthread_mutex_lock(&list_mutex);
+                pthread_rwlock_rdlock(&rwlock);
                 Node* target = find_node(server, message);
                 if (target != NULL && target->connected) {
                     // Notify the target
                     snprintf(server_reply, BUFFER_SIZE, "You have been removed from the chat");
-                    pthread_mutex_unlock(&list_mutex);
+                    pthread_rwlock_unlock(&rwlock);
                     udp_socket_write(pkt->sd, &target->client_ad, server_reply, BUFFER_SIZE);
                     // Notify everyone
                     snprintf(server_reply, BUFFER_SIZE, "%.100s has been removed from the chat\n", target->name);
-                    pthread_mutex_lock(&list_mutex);
+                    pthread_rwlock_wrlock(&rwlock);
                     Node* cur = server;
                     while (cur != NULL) {
                         udp_socket_write(pkt->sd, &cur->client_ad, server_reply, BUFFER_SIZE);
                         cur = cur->next;
                     }
-                    disconnect_node(&server, target);
+                    change_node_conn(&server, &dis_node, target, false);
                 }
-                pthread_mutex_unlock(&list_mutex);
+                pthread_rwlock_unlock(&rwlock);
             }
         }
-        // ========================================================================
         // ret-ping — client returns a heartbeat to stay connected
-        // ========================================================================
         else if (strcmp(instruction, "ret-ping") == 0) {
-            pthread_mutex_lock(&list_mutex);
+            pthread_rwlock_wrlock(&rwlock);
             sender->last_active = time(NULL);
-            pthread_mutex_unlock(&list_mutex);
+            pthread_rwlock_unlock(&rwlock);
         }
         free(pkt);
         return NULL;
     }
 
-    // ============================================================================
-    // LISTENER THREAD
+    // Listener Thread
     // Reads packets using udp_socket_read() (blocking) and spawns workers.
-    // ============================================================================
     void* listener_thread(void* arg) {
         int sd = *(int*)arg;
         while (1) {
@@ -313,17 +329,15 @@
         return NULL;
     }
 
-    // ============================================================================
-    // CLEANUP THREAD
+    // Cleanup Thread
     // Runs every 60 seconds and:
     //   • Warns clients inactive > 5 minutes (sends ping request)
     //   • Disconnects clients inactive > 6 minutes
-    // ============================================================================
     void* cleanup_thread(void* arg) {
         int sd = *(int*)arg;
         while (1) {
             sleep(60);
-            pthread_mutex_lock(&list_mutex);
+            pthread_rwlock_wrlock(&rwlock);
             Node* cur = server;
             time_t now = time(NULL);
             while (cur != NULL) {
@@ -337,19 +351,17 @@
                     else if (idle > 359) {
                         // Disconnect idle client
                         udp_socket_write(sd, &cur->client_ad, "You have been disconnected from the chat due to inactivity", BUFFER_SIZE);
-                        disconnect_node(&server, cur);
+                        change_node_conn(&server, &dis_node, cur, false);
                     }
                 }
                 cur = nxt;
             }
-            pthread_mutex_unlock(&list_mutex);
+            pthread_rwlock_unlock(&rwlock);
         }
         return NULL;
     }
 
-    // ============================================================================
-    // MAIN — Initializes server, creates listener + cleanup threads
-    // ============================================================================
+    // Main — Initializes server, creates listener + cleanup threads
     int main(int argc, char *argv[])
     {
         struct sockaddr_in server_addr;
@@ -359,6 +371,7 @@
         getsockname(sd, (struct sockaddr *)&server_addr, &addr_len);
         // Create server node at head of linked list
         server = create_node("Server", server_addr);
+        dis_node = create_node("Disconnect Node Head", server_addr);
         assert(sd > -1);
 
         printf("Server is listening on port %d\n", SERVER_PORT);

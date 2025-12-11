@@ -192,10 +192,7 @@ Node* find_node(Node *head, const char *target_name) {
     return NULL;
 }
 
-/// @brief 
-/// @param head 
-/// @param client_ad 
-/// @return 
+
 Node* find_node_addr(Node *head, struct sockaddr_in client_ad) {
     Node *cur = head;
     while (cur != NULL) {
@@ -217,10 +214,46 @@ void free_blocklist(BlockNode* head) {
     }
 }
 
-void disconnect_node(Node** head, Node* target) {
-    target->connected = false;
+void remove_node(Node** head, Node* target) {
+    Node* cur = *head;
+    Node* prev = NULL;
+
+    while(cur != NULL) {
+        if (cur == target) {
+            if(prev == NULL) {
+                *head = cur->next;
+            }
+            else {
+                prev->next = cur->next;
+            }
+            target->next = NULL;
+            return;
+        }
+        prev = cur;
+        cur = cur->next;
+    }
 }
 
+void insert_node(Node** head, Node* target) {
+    target->next = NULL;  
+    if (*head == NULL) {
+        *head = target;
+        return;
+    }
+
+    Node* cur = *head;
+    
+    while (cur->next != NULL) {
+        cur = cur->next;
+    }
+    cur->next = target;
+}
+
+void change_node_conn(Node** head, Node** dis_head, Node* target, bool connect) {
+    target->connected = connect;
+    remove_node(head, target);
+    insert_node(dis_head, target);
+}
 
 BlockNode* create_blocknode(Node* target) {
     BlockNode *n = malloc(sizeof(BlockNode));
