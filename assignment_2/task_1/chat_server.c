@@ -96,7 +96,7 @@
                 }
                 pthread_rwlock_unlock(&rwlock);
                 if (strcmp(message, "") == 0) {
-                    snprintf(server_reply, BUFFER_SIZE, "Hi, you have successfully connected to the chat\n");
+                    snprintf(server_reply, BUFFER_SIZE, "Welcome back, you have successfully connected to the chat\n");
                 }
                 else {
                     udp_socket_write(pkt->sd, &pkt->client_addr, server_reply, BUFFER_SIZE);
@@ -199,7 +199,7 @@
         }
         // Disconnect: disconn$
         else if (strcmp(instruction, "disconn") == 0) {
-            snprintf(server_reply, BUFFER_SIZE, "Disconnected. Bye!");
+            snprintf(server_reply, BUFFER_SIZE, "Disconnected. Bye!\n");
             udp_socket_write(pkt->sd, &pkt->client_addr, server_reply, BUFFER_SIZE);
             pthread_rwlock_wrlock(&rwlock);
             change_node_conn(&server, &dis_node, sender, false);

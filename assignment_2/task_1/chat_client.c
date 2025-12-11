@@ -24,6 +24,7 @@ typedef struct {
     int sd;
     struct sockaddr_in server_addr;
     bool connected;
+    bool reconnecting;
     pthread_mutex_t mutex;
 } thread_args_t;
 
@@ -154,6 +155,7 @@ void *sender_thread(void *arg) {
             pthread_mutex_lock(&args->mutex);
             if (!args->connected) {
                 args->connected = true; //trusts that the server has the client's info stored
+                args->reconnecting = true;
                 udp_socket_write(args->sd, &args->server_addr, client_request, BUFFER_SIZE);
 
                 pthread_mutex_lock(&ncurses_mutex);
@@ -195,8 +197,11 @@ void *listener_thread(void *arg) {
             bool is_connected = args->connected;
             pthread_mutex_unlock(&args->mutex);
 
+            if (strcmp(server_response, "Welcome back, you have successfully connected to the chat\n") == 0) {
+                args->reconnecting = false;
+            }
             // Display incoming message if connected
-            if (is_connected) {
+            if (is_connected && strcmp(server_response, "Disconnected. Bye!\n")) {
                 pthread_mutex_lock(&ncurses_mutex);
                 wprintw(win_output, "%s\n", server_response);
                 wrefresh(win_output);
@@ -204,7 +209,7 @@ void *listener_thread(void *arg) {
             }
 
             // Disconnect message by server (kick or inactivity or reply of disconn$)
-            if ((strcmp(server_response,"You have been removed from the chat") == 0)|| (strcmp(server_response, "You have been disconnected from the chat due to inactivity") == 0)|| (strcmp(server_response, "Disconnected. Bye!") == 0)) {
+            if ((strcmp(server_response,"You have been removed from the chat") == 0)|| (strcmp(server_response, "You have been disconnected from the chat due to inactivity") == 0)|| ((strcmp(server_response, "Disconnected. Bye!\n") == 0)&&!args->reconnecting)) {
                 pthread_mutex_lock(&args->mutex);
                 args->connected = false;
                 pthread_mutex_unlock(&args->mutex);
