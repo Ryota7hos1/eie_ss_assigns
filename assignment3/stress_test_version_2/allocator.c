@@ -5,6 +5,10 @@
 #include <stdio.h>
 #include <stdint.h>
 
+// global definitions that are: default to Best-Fit and Merging
+int FIT_STRATEGY = BEST_FIT; 
+int MERGE_ENABLED = 0;
+
 static void *global_mem = NULL;
 
 // mmap wrapper
@@ -41,6 +45,30 @@ void allocator_list_dump(void) {
     printf("\n");
 }
 
+void allocator_stats(size_t* N, size_t* F, size_t* L) {
+    size_t count = 0;
+    size_t total_free_bytes = 0;
+    size_t largest_block_size = 0;
+
+    common_header_t *current = freelist_head;
+
+    while (current != NULL) {
+
+        count++; // N calc
+        
+        total_free_bytes += (size_t)current->size;  // F calc
+
+        if ((size_t)current->size > largest_block_size) {  // L calc
+            largest_block_size = (size_t)current->size;
+        }
+
+        current = current->next;
+    }
+    *N = count;
+    *F = total_free_bytes;
+    *L = largest_block_size;
+}
+
 void *smalloc(size_t n) // best fit
 {
     if (n == 0) return NULL;
@@ -58,17 +86,23 @@ void *smalloc(size_t n) // best fit
 
     while (cur != NULL) {
         if (cur->size >= (int)n) {
-            if (best == NULL || cur->size < best->size)  {// if first match or smaller than current best
+            if (FIT_STRATEGY == BEST_FIT) {  // fit type
+                if (best == NULL || cur->size < best->size)  {// if first match or smaller than current best
+                    best = cur;
+                    best_prev = prev;
+                }
+            }
+            else if (FIT_STRATEGY == FIRST_FIT) { 
                 best = cur;
                 best_prev = prev;
+                break; // use the first free list node and exit
             }
         }
         prev = cur;
         cur = cur->next;
     }
 
-    // no free block big enough
-    if (best == NULL) return NULL;
+    if (best == NULL) return NULL;  // no free block big enough
 
     // split condition variable
     int remainder = best->size - (int)n - (int)sizeof(common_header_t);
@@ -84,6 +118,7 @@ void *smalloc(size_t n) // best fit
         new_block->next = best->next;
 
         best->size = (int)n;
+
         // remove best from free list
         if (best_prev == NULL)
             freelist_head = new_block;
@@ -158,10 +193,12 @@ void sfree(void *ptr) {
     // now this function is used to insert freed block into the linked list and return the previous node
     common_header_t *prev = insert_sorted_and_return_prev(block);
 
-    try_merge_with_next(block);
+    if (MERGE_ENABLED) {   // merge toggle
+        try_merge_with_next(block);
 
-    if (prev != NULL) {   // if the freelist node isn't the head node
-        try_merge_prev_with_next(prev);
+        if (prev != NULL) { // if the freelist node isn't the head node
+            try_merge_prev_with_next(prev);
+        }
     }
 }
 
