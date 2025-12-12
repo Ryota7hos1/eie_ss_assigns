@@ -467,6 +467,8 @@ What made us realise that we needed to change either the Heap Boundaries or Heap
 #### **After Heap Memory Adjustment:**
 ![Results After Adjustment](size_class_arenas/results/after_adjust.png)
 
+As shown, the external fragmentation index has increased compared to the single heap best fit and merge startegy which is as I expected because the different arenas have rigid memory boundaries and cannot rely on each other for free space. As a result, fragmentation is expected to happen more but it doesn't change the efficiency of allocating the memory blocks into arenas.
+
 
 ### **Ensuring Freed Blocks Returned to the Correct Arena**
 
