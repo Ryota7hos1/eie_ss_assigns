@@ -129,6 +129,9 @@
                 udp_socket_write(pkt->sd, &pkt->client_addr, "Duplicate", BUFFER_SIZE);
             }
         }
+        else if (sender == NULL) {
+            return NULL;
+        }
         // Global Message: say$ message
         // Broadcast to all clients except those who have muted the sender.
         else if (strcmp(instruction, "say") == 0) {
@@ -164,6 +167,10 @@
             
             pthread_rwlock_rdlock(&rwlock);
             Node* receiver = find_node(server, name);
+            if (receiver == NULL) {
+                pthread_rwlock_unlock(&rwlock);
+                return NULL;
+            }
             if (strcmp(receiver->name, "Server") == 0) {
                 snprintf(server_reply, BUFFER_SIZE, "Can't send the server a private message\n");
                 pthread_rwlock_unlock(&rwlock);
@@ -257,7 +264,7 @@
                     cur = cur->next;
                 }
             }
-            if (!name_exists) {
+            if (!name_exists && n < 2) {
                 strncpy(sender->name, message, BUFFER_SIZE);
                 sender->name[BUFFER_SIZE - 1] = '\0';
                 snprintf(server_reply, BUFFER_SIZE, "You are now known as %.100s\n", sender->name);
@@ -275,16 +282,14 @@
         // Only allowed if sender port == 6666
         else if (strcmp(instruction, "kick") == 0) {
             if (ntohs(sender->client_ad.sin_port) == 6666) {
-                pthread_rwlock_rdlock(&rwlock);
+                pthread_rwlock_wrlock(&rwlock);
                 Node* target = find_node(server, message);
                 if (target != NULL && target->connected) {
                     // Notify the target
                     snprintf(server_reply, BUFFER_SIZE, "You have been removed from the chat");
-                    pthread_rwlock_unlock(&rwlock);
                     udp_socket_write(pkt->sd, &target->client_ad, server_reply, BUFFER_SIZE);
                     // Notify everyone
                     snprintf(server_reply, BUFFER_SIZE, "%.100s has been removed from the chat\n", target->name);
-                    pthread_rwlock_wrlock(&rwlock);
                     Node* cur = server;
                     while (cur != NULL) {
                         udp_socket_write(pkt->sd, &cur->client_ad, server_reply, BUFFER_SIZE);

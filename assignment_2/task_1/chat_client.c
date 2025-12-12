@@ -42,7 +42,6 @@ void *initial_thread(void *arg) { //initial loop
     char client_request[BUFFER_SIZE];
     char req_type[BUFFER_SIZE];
     char req_cont[BUFFER_SIZE];
-    char name_check[BUFFER_SIZE];
     while (1) {
         pthread_mutex_lock(&ncurses_mutex);
         werase(win_input);
@@ -62,6 +61,7 @@ void *initial_thread(void *arg) { //initial loop
         // Remove trailing newline
         client_request[strcspn(client_request, "\n")] = '\0';
         // Extract type and content (e.g., conn$ name)
+        char name_check[BUFFER_SIZE];
         int n = sscanf(client_request, "%[^$]$ %s %s", req_type, req_cont, name_check);
         // --- Validate connection command ---
         if (strcmp(req_type, "conn") == 0) {
