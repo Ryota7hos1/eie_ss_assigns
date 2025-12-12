@@ -450,7 +450,7 @@ The first attempt used:
 But the stress test allocates uniformly random sizes up to ~32KB. Most requests are larger than 2KB which is the lower bound for the Large Heap, so nearly all allocations were routed to the Large Arena. This caused:
 
 #### **Failure Before Heap Memory Adjustment:**
-![Results Before Adjustment](size_class_arenas/results/b4_bound_adjust.png)
+![Results Before Adjustment](size_class_arenas/results/before_adjust.png)
 
 What made us realise that we needed to change either the Heap Boundaries or Heap Memory Capacities is that we noticed that the Memory Allocated had stopped perfectly at 4MB, which was the size of the Large Arena. Therefore this led us to think that the Large ARENA was overloaded with allocation requests and was the point of failure.
 
@@ -466,8 +466,6 @@ What made us realise that we needed to change either the Heap Boundaries or Heap
 
 #### **After Heap Memory Adjustment:**
 ![Results After Adjustment](size_class_arenas/results/after_adjust.png)
-
-
 
 
 ### **Ensuring Freed Blocks Returned to the Correct Arena**
