@@ -1,139 +1,213 @@
-UDP Chat System
-Ryota Hosokawa (CID:02591705) Seiji Ethan Cann (CID:02592695)
-1. Project Overview: 
-This project implements a multithreaded UDP chat system in C with a terminal-based client, consisting of a central UDP server that manages UDP clients, message routing and history. Multiple terminal-based clients using ncurses for a UI and a three-thread architecture. It demonstrates core concepts of concurrency, synchronization, and UDP communication by allowing multiple users to join a chat, send messages, and interact in real time. Both the server and client use multiple threads and mutexes to ensure safe parallel access to shared data structures.
-2. Short Description
-Client:
-・Ncurses-based UI with separate input and output windows.
-・Three-thread architecture
-    ・initial_thread – performs the required initial conn$NAME handshake.
-    ・sender_thread – continuously reads user input and sends commands.
-    ・listener_thread – continuously receives messages from server.
-・Supports connection, disconnection(with special server messages automatically triggering forced disconnection), reconnection after disconnection, and sending messages
-・Displays messages from the Server using a global ncurses mutex
-Server:
-・Open a UDP server port (12000)
-・Maintains
-    ・A linked list of connected users
-    ・A linked list of disconnected users (for reconnection & state preservation)
-    ・A BlockNode linked list for mute relationships
-・Each user node contains:
-    ・Name
-    ・Socket address
-    ・Last active timestamp
-    ・“Connected” boolean
-    ・Head of muted_by client BlockNode linked list
-    ・Circular buffer for private history
-・The server node itself stores the global history buffer.
-・Three-thread architecture
-    ・listener_thread – Listens for UDP packets from clients and spawns a worker thread for each received packet.
-    ・worker_thread – handles all commands and updates shared state.
-    ・cleanup_thread – continuously checks connection status for inactivity and disconnects idle clients.
-・Manages user activity and automatically disconnects inactive clients.
-・Handles commands such as conn, say, sayto, disconn, mute, unmute, rename, ret-ping, and kick (admin).
-3. Features Implemented
-Client:
-Feature             | Implemeted | Notes
-UDP Port (Random)   | Full       |When the user types ./client, it is default to port number 0 which will be assigned to a random available port, or when it is ./client admin, then we get port number 6666
-Sender thread       | Full       |Checks connection state and sends requests accordingly
-Listener thread     | Full       |Receives packets; disconnects on special messages; safe from injection
-Initial thread      | Full       |Prevents other threads from starting until a successful conn$
-Supporting Requests | Full       |Some invalid connection commands detected before sending (the other are treated by server)
-User Interface      | Full       |Ncurses input/output windows, thread-safe UI. maximize window to see full history
-Server:
-UDP Port (12000)    | Full       |Server binds to fixed port
-Listener Threads    | Full       |Spawns worker threads for each received packet
-Responding Thread   | Full       |1 handler for all instructions. (All logic in one thread rather than one per instruction as recommended)
-Linked List data    | Full       |Linked List implemented with server being the first Node of the Linked List, A second Linked List with thre same paramters for disconnected clients and a 3rd one for tracking mute are also implemented
-Circular Buffer     | Full       |Per-user private history + global history stored in server node
-conn$               | Full       |conn$ name, or conn$, creates new user nodes or reconnects; sends global & private history
-say$                | Full       |say$ message, broadcasts messages to all users except the ones that have the sender muted and disconnected users, this message is stored into global history buffer as well
-sayto$              | Full       |sayto$ name message, sends private message to receiver unless muted or disconnected and saved in both sender & receiver buffers
-disconn$            | Full       |disconn$, marks as disconnected & moves node to disconnected list.
-mute$               | Full       |mute$ name, updates blocked_by BlockNode linked list. Adds a BlockNode with parameters, Node of the sender and next, to the user being blocked.(reverse mute logic) System check to not add same user to BlockNode more than once
-unmute$             | Full       |unmute$ Name scans the BlockNode of user with Name, and removes the sender from it if it exists (reverse mute logic so also reverse unmute logic) muting or unmuting of a disconnected Node cannot happen
-rename$             | Full       |rename$ Name uniqueness of the name is checked and the name is updated on the LinkedList if it is unique (Cannot be the same as any users including disconnected)
-kick$               | Full       |kick$ Name if the sender is admin(port 6666) remove the specified client
+# UDP Chat System  
+**Ryota Hosokawa (CID: 02591705)**  
+**Seiji Ethan Cann (CID: 02592695)**  
 
-Synchronization     | Full       |reader–writer lock is implemented for the Linked Lists (Circular buffer locking done in cb functions)
+---
 
-Extensions:
-Proposed Extension 1| Full       |Circular buffer structure was added to store global messages on say$ commands. The global variable later change to the circular buffer in the server node to make data structure better for reconnection with state preservation (Further Enhancement 1)
-Proposed Extension 2| Full       |Inactive clients are removed by a clean up thread in server (sends ping$ to client, client can either do any commands or do ret-ping$ to just update their last connection time, reconnection is still with conn$) the clients do not disconnect on 6 minutes exactly, they will receive a warning 5-6min after being inactive and disconnected 6-7min after being inactive.
-Further Enhancement | Partial    |Reconnection with state preservation is implemented by moving disconnected users to a different Linked List and looking through there when client requests to reconnect. A circular buffer has been added to the structure of Nodes of the Linked List to maintain private chat history. Since server is in the main Linked List as the first node, we make its circular buffer the global chat history for better data usage.
-Others              | Partial    |Additional client thread for safe connection; better validation (name uniqueness); improved data structures.
+## 1. Project Overview
+This project implements a multithreaded **UDP chat system** in C with a **terminal-based client**.  
+It consists of:
 
-4. How to compile & run
-Server:
+- A **central UDP server** that manages clients, message routing, and history  
+- Multiple **ncurses-based clients**, each using a **three-thread architecture**  
+
+The system demonstrates concurrency, synchronization, and UDP communication by enabling users to join, exchange messages, and interact in real time.  
+Both server and client employ **multiple threads and mutexes** to ensure safe parallel access to shared data.
+
+---
+
+## 2. Short Description
+
+### **Client**
+- Ncurses-based UI with separate input/output windows  
+- **Three threads**:
+  - `initial_thread` – performs initial `conn$NAME` handshake  
+  - `sender_thread` – reads user input and sends commands  
+  - `listener_thread` – receives messages from server  
+- Supports connection, disconnection (including forced), reconnection, message sending  
+- Thread-safe UI using global ncurses mutex  
+
+### **Server**
+- UDP server bound to port **12000**
+- Maintains:
+  - Linked list of **connected users**
+  - Linked list of **disconnected users**
+  - `BlockNode` linked list for **mute relationships**
+- Each user node contains:
+  - Name  
+  - `sockaddr_in`  
+  - Last active timestamp  
+  - Connected boolean  
+  - `muted_by` BlockNode list  
+  - Circular buffer (private history)
+- Server node stores **global history buffer**
+- **Three-thread architecture**:
+  - `listener_thread` – receives packets, spawns worker threads  
+  - `worker_thread` – processes commands & updates shared state  
+  - `cleanup_thread` – checks inactivity and disconnects idle clients  
+- Handles commands: `conn`, `say`, `sayto`, `disconn`, `mute`, `unmute`, `rename`, `ret-ping`, `kick`  
+
+---
+
+## 3. Features Implemented
+
+### **Client Features**
+
+| Feature               | Implemented | Notes |
+|----------------------|-------------|-------|
+| UDP Port (Random)    | Full        | `./client` → random port, `./client admin` → port 6666 |
+| Sender thread        | Full        | Sends requests based on connection state |
+| Listener thread      | Full        | Receives packets; safe from injection; handles forced disconnect |
+| Initial thread       | Full        | Blocks other threads until a valid `conn$` |
+| Supporting requests  | Full        | Basic validation before sending |
+| User Interface        | Full        | Ncurses windows, thread-safe, full history visible with large terminal |
+
+### **Server Features**
+
+| Feature               | Implemented | Notes |
+|----------------------|-------------|-------|
+| UDP Port (12000)     | Full        | Fixed port |
+| Listener Threads     | Full        | Spawns worker thread per packet |
+| Responding Thread    | Full        | Single handler for all instructions |
+| Linked List Data     | Full        | Lists for connected, disconnected, and mute nodes |
+| Circular Buffer      | Full        | Global + per-user private history |
+| conn$                | Full        | Connects or reconnects; sends histories |
+| say$                 | Full        | Broadcast except to those who muted sender |
+| sayto$               | Full        | Private messaging; saved in both user buffers |
+| disconn$             | Full        | Moves user to disconnected list |
+| mute$                | Full        | Reverse-logic mute tracking via BlockNode |
+| unmute$              | Full        | Removes BlockNode entry |
+| rename$              | Full        | Enforces name uniqueness (including disconnected users) |
+| kick$                | Full        | Admin-only force disconnect |
+
+### **Synchronization**
+- **Reader–writer lock** for linked lists  
+- Circular buffer locking inside buffer functions  
+
+### **Extensions**
+- **Extension 1** – Global circular buffer for history (Full)  
+- **Extension 2** – Cleanup thread removing inactive clients (Full)  
+- **Reconnection state preservation** – Partial (private + global history maintained)  
+- **Other enhancements** – Partial (extra checks, structure improvements)  
+
+---
+
+## 4. How to Compile & Run
+
+## **Server**
+```bash
 gcc chat_server.c -o server -lpthread
-./server or ./server &
-
-Client:
-open a new terminal window for each client
+./server
+# or
+./server &
+### **Client**
+```bash
 gcc chat_client.c -o client -lncurses -lpthread
-./client or ./client admin
-./client makes the port a random available port
-./client admin makes the port 6666 the admin port
+./client         # uses a random available port
+./client admin   # uses port 6666 (admin port)
 
-Example Session:
-./client              ./client                           ./client admin
-conn$ c1              conn$ c2                           conn$ admin111
+### **Example Session**
+Client 1           Client 2                Client Admin
+-------------------------------------------------------------
+conn$ c1           conn$ c2                conn$ admin111
 say$ hi
 sayto$ c2 hello
-mute$ c2              sayto$ c1 hi c1
-unmute$ c2            say$ can you hear me c1
-rename$ c3            sayto$ c3 you changed your name
-                      disconn$
-                                                         kick$ c3
+mute$ c2           sayto$ c1 hi c1
+unmute$ c2         say$ can you hear me c1
+rename$ c3         sayto$ c3 you changed your name
+                   disconn$
+                                          kick$ c3
 conn$
 
-5. Architecture & Design 
-Data Structures:
-・Linked Lists
-    ・Nodes
-        ・name
-        ・socketaddr_in
-        ・BlockNode
-        ・last_active
-        ・connected
-        ・circular buffer
-        ・circular buffer lock
-        ・next
-    ・BlockNodes (Used for reverse mute relationship)
-        ・Node
-        ・next
-Thread Architecture
-    ・Server
-        ・listener_thread - spawns worker threads
-        ・worker_thread (many) - handles incoming packets
-        ・cleanup_thread - removes inactive clients
-    ・Client
-        ・initial_thread
-        ・sender_thread
-        ・listener_thread
 
-6. Explanation of design choices
-・State preservation:
-    ・Users are never fully freed until server termination.
-    ・This allows seamless reconnection with full chat history.
-・Memory management:
-    ・No explicit memory-freeing functions are implemented. Since the server and client processes terminate cleanly, the operating system automatically reclaims all allocated memory.
-・Server node global buffer:
-    ・The server node stores global chat history, since it has no private messages.
-・Single worker thread design:
-    ・Instead of one thread per instruction, a unified worker thread handles all commands.
-・Robust initial connection:
-    ・A dedicated initial thread ensures the client cannot perform actions until the server replies “ok”.
-・Unified disconnection logic:
-    ・All disconnection causes (disconn$, inactivity, kick) behave identically for reconnection.
 
-7. Considered Cases
-・Name being multi worded - client and rename$ in server have checks to not let the user have a multiworded name
-・Multiple clients with same name - conn$ and rename$ in server has a check to test the name against all users (connected and disconnected)
-・Muting the same user multiple times - Since all names are unique, we have a check in mute$ to see if the user has already been muted
-・Muting and Unmuting a disconnected user - Muting and Unmuting a disconnected user cannot happen
-・Observed that sometimes the UDP socket buffer is very unreliable and the listener thread can pick up the same request (Sometimes conn$ needs to be typed twice before reconnecting) -> we added a variable to make sure that the listener thread and sender thread doesn't have a race condition to change client varaible threads args->connected, by adding a new boolean args->reconnecting to it.
-・Multi-level check for disconnection - We have a check on the client side and server side to make sure the client does not get anything from the server on their screen while disconnected
-・Ensuring initial connection with response from Server - We separated the Initial connection logic with the sender thread logic so that we won't have a situation where the listener thread activates before the server allows the user to connect with a proper name
-・sayto$ targeting the server – Clients cannot send sayto$ messages to the server; an error is returned.
-・Global history with message from muted client on reconnection - the global history does not care wether a certain client has another client muted, it will store the say$ message in the circular buffer anyways. That means the reutrning client may see messages from a muted client that broadcasted its message with say$ in the global history upon reconnection. We deemed this an unimportant problem.
+---
+
+## 5. Architecture & Design
+
+### Data Structures
+
+**Linked Lists**
+- Nodes:
+  - name  
+  - sockaddr_in  
+  - BlockNode  
+  - last_active  
+  - connected  
+  - circular buffer  
+  - circular buffer lock  
+  - next  
+
+**BlockNodes (Reverse mute relationship, i.e., "muted_by" list)**
+- Node (the user who muted)
+- next
+
+---
+
+### Thread Architecture
+
+**Server Threads**
+- `listener_thread` – spawns worker threads  
+- `worker_thread` (many) – handles all incoming packets and executes commands  
+- `cleanup_thread` – removes inactive (idle) clients  
+
+**Client Threads**
+- `initial_thread`  
+- `sender_thread`  
+- `listener_thread`  
+
+---
+
+## 6. Explanation of Design Choices
+
+### State Preservation
+- Users are never fully freed until server termination.  
+- This allows seamless reconnection with full private + global chat history.
+
+### Memory Management
+- No explicit memory freeing.  
+- Server and clients rely on OS to reclaim memory after process termination.
+
+### Server Node Global Buffer
+- The server node stores the global chat history.  
+- It has no private messages, making it an ideal place for global state.
+
+### Single Worker Thread Approach
+- Instead of separate handlers for each instruction, one unified worker thread handles all commands.  
+- Simplifies code and avoids cross-thread conflicts.
+
+### Robust Initial Connection
+- A dedicated initial thread on the client ensures no actions occur until server responds `ok`.  
+- Prevents race conditions with listener thread.
+
+### Unified Disconnection Logic
+- `disconn$`, timeout inactivity, and admin `kick$` all behave identically.  
+- This ensures consistent reconnection behavior.
+
+---
+
+## 7. Considered Cases
+
+- **Multi-word names** disallowed (checked on both client & server for `conn$` and `rename$`).  
+- **Duplicate names** disallowed (checked against connected + disconnected clients).  
+- **Muting same user multiple times** prevented with BlockNode checks.  
+- **Muting/unmuting disconnected users** not allowed.  
+- **UDP buffer unreliability**:  
+  - Listener thread may receive duplicate packets (e.g., requiring `conn$` twice).  
+  - Added `args->reconnecting` boolean to prevent race conditions between sender and listener threads when updating `args->connected`.
+
+- **Multi-level disconnection checks**:  
+  - Both client and server ensure clients receive no messages while disconnected.
+
+- **Safe initial connection**:  
+  - Initial logic separated from sender thread to prevent actions before server approval.
+
+- **sayto$ targeting server**:  
+  - Not allowed; server returns an error.
+
+- **Global history includes muted users' messages**:  
+  - Global circular buffer stores all broadcast (`say$`) messages.  
+  - Returning clients may see messages from users they muted earlier.  
+  - Considered acceptable and low priority.
+
+---
