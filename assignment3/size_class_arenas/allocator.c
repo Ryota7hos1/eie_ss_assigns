@@ -4,193 +4,142 @@
 #include <sys/mman.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <stddef.h> // Ensure size_t is available
+#include <string.h> /* for memset */
 
-
-// Global definitions for configuration
-// Defaulting to BEST_FIT (2) and Merge Enabled (1) for Arena testing
-int FIT_STRATEGY = BEST_FIT; 
+/* global definitions that are: default to Best-Fit and Merging */
+int FIT_STRATEGY = BEST_FIT;
 int MERGE_ENABLED = 1;
 
+/* Per-arena heap pointers (mmap'd regions) */
+static void *heap_small = NULL;
+static void *heap_med   = NULL;
+static void *heap_large = NULL;
 
-// mmap wrapper
+/* mmap wrapper */
 void *get_mem_block(void *addr, size_t mem_size) {
     void *p = mmap(addr, mem_size, PROT_READ | PROT_WRITE,
                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     return (p == MAP_FAILED) ? NULL : p;
 }
 
+/* utility: requested memory includes header */
 size_t allocator_req_mem(size_t payload) {
     return payload + sizeof(common_header_t);
 }
 
-// --- Helper to get the correct freelist head based on request size ---
-common_header_t **get_head_for_size(size_t total_req) {
-    if (total_req <= TINY_MAX_SIZE) {
-        return &tiny_freelist_head;
-    } else if (total_req <= SMALL_MAX_SIZE) {
-        return &small_freelist_head;
-    } else { // Medium handles > 8 KB up to 32 KB (max request size)
-        return &medium_freelist_head;
-    }
-}
-
-
-// total free data allocation bytes (UPDATED for Arenas)
+/* total free data allocation bytes across all arenas */
 size_t allocator_free_mem_size(void) {
     size_t sum = 0;
-    common_header_t *heads[] = {tiny_freelist_head, small_freelist_head, medium_freelist_head};
-
-    for (int i = 0; i < 3; ++i) {
-        for (common_header_t *c = heads[i]; c; c = c->next) {
-            sum += (size_t)c->size;
-        }
-    }
+    common_header_t *c;
+    for (c = freelist_small; c; c = c->next) sum += c->size;
+    for (c = freelist_med;   c; c = c->next) sum += c->size;
+    for (c = freelist_large; c; c = c->next) sum += c->size;
     return sum;
 }
 
-// print free list (UPDATED for Arenas)
+/* print all freelists */
 void allocator_list_dump(void) {
-    common_header_t *heads[] = {tiny_freelist_head, small_freelist_head, medium_freelist_head};
-    const char *names[] = {"TINY", "SMALL", "MEDIUM"};
-    
-    for (int i = 0; i < 3; ++i) {
-        printf("\n%s List: ", names[i]);
-        common_header_t *c = heads[i];
-        int first = 1;
-        while (c) {
-            if (!first) printf(" -> ");
+    common_header_t *c;
+    printf("Small: ");
+    c = freelist_small;
+    if (!c) printf("(empty)");
+    while (c) { printf("[%d]", c->size); if (c->next) printf(" -> "); c = c->next; }
+    printf("\n");
 
-            printf("[%d]", c->size);
-            first = 0;
-            c = c->next;
-        }
-        printf("\n");
+    printf("Med:   ");
+    c = freelist_med;
+    if (!c) printf("(empty)");
+    while (c) { printf("[%d]", c->size); if (c->next) printf(" -> "); c = c->next; }
+    printf("\n");
+
+    printf("Large: ");
+    c = freelist_large;
+    if (!c) printf("(empty)");
+    while (c) { printf("[%d]", c->size); if (c->next) printf(" -> "); c = c->next; }
+    printf("\n");
+}
+
+/* Stats helper: collect from a single freelist head */
+static void collect_from_head(common_header_t *head, size_t* N, size_t* F, size_t* L) {
+    for (common_header_t *c = head; c; c = c->next) {
+        (*N)++;
+        (*F) += (size_t)c->size;
+        if ((size_t)c->size > *L) *L = (size_t)c->size;
     }
 }
 
-
-// --- New Initialization Logic ---
-static int init_arenas() {
-    // 1. Tiny Arena
-    tiny_base_addr = get_mem_block(NULL, TINY_ARENA_SIZE);
-    if (!tiny_base_addr) return 0;
-    init_free_list(tiny_base_addr, TINY_ARENA_SIZE, &tiny_freelist_head);
-
-    // 2. Small Arena
-    small_base_addr = get_mem_block(NULL, SMALL_ARENA_SIZE);
-    if (!small_base_addr) return 0;
-    init_free_list(small_base_addr, SMALL_ARENA_SIZE, &small_freelist_head);
-
-    // 3. Medium Arena
-    medium_base_addr = get_mem_block(NULL, MEDIUM_ARENA_SIZE);
-    if (!medium_base_addr) return 0;
-    init_free_list(medium_base_addr, MEDIUM_ARENA_SIZE, &medium_freelist_head);
-
-    return 1;
+/* aggregate stats across the three arenas */
+void allocator_stats(size_t* N, size_t* F, size_t* L) {
+    if (!N || !F || !L) return;
+    *N = *F = *L = 0;
+    collect_from_head(freelist_small, N, F, L);
+    collect_from_head(freelist_med,   N, F, L);
+    collect_from_head(freelist_large, N, F, L);
 }
 
-
-void *smalloc(size_t n) // Best-Fit with Arena Routing
-{
-    if (n == 0) return NULL;
-    size_t total_req = allocator_req_mem(n);
-    
-    // Initialize ALL arenas on first call
-    if (!tiny_base_addr) {
-        if (!init_arenas()) return NULL;
+/* Ensure arenas are created and initialised */
+void init_arenas(void) {
+    if (!heap_small) {
+        heap_small = get_mem_block(NULL, SMALL_HEAP);
+        if (heap_small) init_free_list_explicit(&freelist_small, heap_small, SMALL_HEAP);
     }
-    
-    // 1. ROUTE: Get the correct freelist head pointer
-    common_header_t **freelist_head_ptr = get_head_for_size(total_req);
-    // If request is larger than 32KB (max size of MEDIUM), it fails here (NULL ptr)
-    if (freelist_head_ptr == NULL) return NULL; 
-    
-    common_header_t *freelist_head_current = *freelist_head_ptr;
-
-    common_header_t *best = NULL;
-    common_header_t *best_prev = NULL;
-    common_header_t *prev = NULL;
-    common_header_t *cur = freelist_head_current;
-    
-    // 2. BEST-FIT SEARCH (inside the selected arena only)
-    while (cur != NULL) {
-        if (cur->size >= (int)n) {
-            
-            // --- Fit Strategy Implementation ---
-            if (FIT_STRATEGY == BEST_FIT) {
-                // Best-Fit: Find the smallest suitable block
-                if (best == NULL || cur->size < best->size) {
-                    best = cur;
-                    best_prev = prev;
-                }
-            } else if (FIT_STRATEGY == FIRST_FIT) {
-                // First-Fit: Use the first suitable block found and stop searching
-                best = cur;
-                best_prev = prev;
-                break; // Found it, exit the loop
-            }
-            // ------------------------------------
-
-        }
-        prev = cur;
-        cur = cur->next;
+    if (!heap_med) {
+        heap_med = get_mem_block(NULL, MED_HEAP);
+        if (heap_med) init_free_list_explicit(&freelist_med, heap_med, MED_HEAP);
     }
-
-    if (best == NULL) return NULL; // No free block big enough in this arena
-
-    // 3. SPLITTING AND REMOVAL (logic remains the same, but updates the selected head)
-    int remainder = best->size - (int)n - (int)sizeof(common_header_t);
-
-    if (remainder >= (int)(sizeof(common_header_t) + 1)) {
-        uint8_t *base = (uint8_t*)best;
-        common_header_t *new_block = (common_header_t*)(base + sizeof(common_header_t) + n);
-
-        new_block->size = remainder;
-        new_block->next = best->next;
-
-        best->size = (int)n;
-
-        // REMOVAL: Update the head pointer through the pointer-to-pointer
-        if (best_prev == NULL)
-            *freelist_head_ptr = new_block; // Update the selected arena's head
-        else
-            best_prev->next = new_block;
-    } else {
-        if (best_prev == NULL) {
-            *freelist_head_ptr = best->next; // Update the selected arena's head
-        } else {
-            best_prev->next = best->next;
-        }
+    if (!heap_large) {
+        heap_large = get_mem_block(NULL, LARGE_HEAP);
+        if (heap_large) init_free_list_explicit(&freelist_large, heap_large, LARGE_HEAP);
     }
-
-    return (uint8_t*)best + sizeof(common_header_t);
 }
 
+/* Helper: choose arena head pointer by requested payload size */
+static common_header_t **arena_head_for_size(size_t n) {
+    if (n <= SMALL_MAX) return &freelist_small;
+    else if (n <= MED_MAX)   return &freelist_med;
+    else return &freelist_large;
+}
 
-// The following helper functions must be updated to take the arena head as a parameter
-static common_header_t *insert_sorted_and_return_prev(common_header_t *block, common_header_t **head_ptr) {
-    common_header_t *freelist_head = *head_ptr; // Get the correct head for this arena
-    
-    // Check 1: Insertion at the head (before the current head)
-    if (freelist_head == NULL || block < freelist_head) {
-        block->next = freelist_head;
-        *head_ptr = block; // <--- Correctly updates the head pointer (e.g., tiny_freelist_head)
-        return NULL;
+/* Helper: determine arena head by pointer value (when freeing). Uses address ranges. */
+static common_header_t **arena_head_for_ptr(void *ptr) {
+    if (ptr == NULL) return &freelist_small; 
+    uintptr_t p = (uintptr_t)ptr;
+
+    if (heap_small) {
+        uintptr_t start = (uintptr_t)heap_small;
+        uintptr_t end = start + SMALL_HEAP;
+        if (p >= start && p < end) return &freelist_small;
+    }
+    if (heap_med) {
+        uintptr_t start = (uintptr_t)heap_med;
+        uintptr_t end = start + MED_HEAP;
+        if (p >= start && p < end) return &freelist_med;
+    }
+    // default
+    return &freelist_large;
+}
+
+/* Insert sorted into a specified freelist; return previous node pointer (or NULL if inserted at head) */
+static common_header_t *insert_sorted_and_return_prev(common_header_t *block, common_header_t **head) {
+    if (head == NULL || block == NULL) return NULL;
+
+    if (*head == NULL || block < *head) {
+        block->next = *head;
+        *head = block;
+        return NULL; // no previous node
     }
 
-    // Check 2: Insertion in the middle
-    common_header_t *cur = freelist_head;
+    common_header_t *cur = *head;
     while (cur->next != NULL && cur->next < block) {
         cur = cur->next;
     }
 
     block->next = cur->next;
     cur->next = block;
-    return cur; // The physical predecessor
+    return cur;
 }
 
-// try_merge_with_next logic (NO CHANGE)
+/* Merge helpers operate only on the provided freelist nodes (no global) */
 static int try_merge_with_next(common_header_t *block) {
     if (block == NULL || block->next == NULL) return 0;
 
@@ -203,7 +152,6 @@ static int try_merge_with_next(common_header_t *block) {
     return 0;
 }
 
-// try_merge_prev_with_next logic (NO CHANGE)
 static int try_merge_prev_with_next(common_header_t *prev) {
     if (prev == NULL || prev->next == NULL) return 0;
 
@@ -216,86 +164,93 @@ static int try_merge_prev_with_next(common_header_t *prev) {
     return 0;
 }
 
+/* smalloc: selects arena, finds best/first fit, splits/removes from that arena's freelist */
+void *smalloc(size_t n) {
+    if (n == 0) return NULL;
 
+    /* Ensure arenas exist */
+    init_arenas();
+
+    /* Select arena freelist */
+    common_header_t **arena_head = arena_head_for_size(n);
+    if (arena_head == NULL) return NULL;
+
+    /* Search freelist for best/first fit */
+    common_header_t *best = NULL;
+    common_header_t *best_prev = NULL;
+    common_header_t *prev = NULL;
+    common_header_t *cur = *arena_head;
+
+    while (cur != NULL) {
+        if ((size_t)cur->size >= n) {
+            if (FIT_STRATEGY == BEST_FIT) {
+                if (best == NULL || cur->size < best->size) {
+                    best = cur;
+                    best_prev = prev;
+                }
+            } else { /* FIRST_FIT */
+                best = cur;
+                best_prev = prev;
+                break;
+            }
+        }
+        prev = cur;
+        cur = cur->next;
+    }
+
+    if (best == NULL) return NULL; /* no free block big enough */
+
+    /* split condition variable */
+    int remainder = best->size - (int)n - (int)sizeof(common_header_t);
+
+    if (remainder >= (int)(sizeof(common_header_t) + 1)) {
+        /* create new free block after allocated region */
+        uint8_t *base = (uint8_t*)best;
+        common_header_t *new_block = (common_header_t*)(base + sizeof(common_header_t) + n);
+        new_block->size = remainder;
+        new_block->next = best->next;
+
+        best->size = (int)n;
+
+        /* replace best in freelist with new_block */
+        if (best_prev == NULL) {
+            *arena_head = new_block;
+        } else {
+            best_prev->next = new_block;
+        }
+    } else {
+        /* remove best from freelist */
+        if (best_prev == NULL) {
+            *arena_head = best->next;
+        } else {
+            best_prev->next = best->next;
+        }
+    }
+
+    /* return pointer to usable payload area */
+    return (uint8_t*)best + sizeof(common_header_t);
+}
+
+/* sfree: insert block back into the right arena freelist and merge if enabled */
 void sfree(void *ptr) {
     if (ptr == NULL) return;
 
+    /* compute header address */
     common_header_t *block = (common_header_t*)((uint8_t*)ptr - sizeof(common_header_t));
 
-    // 1. ROUTE: Determine which arena this block belongs to
-    common_header_t **freelist_head_ptr = get_freelist_head_ptr(block);
-    
-    if (freelist_head_ptr == NULL) return; 
+    /* find which arena this pointer belongs to */
+    common_header_t **arena_head = arena_head_for_ptr(ptr);
 
-    // 2. INSERT: Insert and get the predecessor
-    common_header_t *prev = insert_sorted_and_return_prev(block, freelist_head_ptr);
+    /* insert sorted into that freelist, receive prev node */
+    common_header_t *prev = insert_sorted_and_return_prev(block, arena_head);
 
-    // 3. MERGE: Coalesce within the determined arena
     if (MERGE_ENABLED) {
-        // Try merging the newly inserted 'block' with the block immediately AFTER it in the list.
-        try_merge_with_next(block); 
+        /* try merge with next (block->next may have changed) */
+        try_merge_with_next(block);
 
+        /* if there is a previous node, try merging prev with its next */
         if (prev != NULL) {
-            // Try merging the block immediately BEFORE 'block' (i.e., 'prev') with the new 'block'.
-            // Note: Since 'block' may have merged with its successor in the previous step, 
-            // the new successor of 'prev' is either 'block' or the merged result.
             try_merge_prev_with_next(prev);
         }
     }
-}
-
-
-// Function required by allocation_stress_test.c to compute free list stats (UPDATED for Arenas)
-void allocator_stats(size_t* N, size_t* F, size_t* L) {
-    // This is the function required for the overall (combined) report
-    size_t total_count = 0;
-    size_t total_free_bytes = 0;
-    size_t largest_block_size = 0;
-
-    common_header_t *heads[] = {tiny_freelist_head, small_freelist_head, medium_freelist_head};
-
-    for (int i = 0; i < 3; ++i) {
-        common_header_t *current = heads[i];
-        while (current != NULL) {
-            total_count++;
-            total_free_bytes += (size_t)current->size;
-
-            // L must be the single largest block across *all* arenas for the final report.
-            if ((size_t)current->size > largest_block_size) {
-                largest_block_size = (size_t)current->size;
-            }
-
-            current = current->next;
-        }
-    }
-
-    *N = total_count;
-    *F = total_free_bytes;
-    *L = largest_block_size;
-}
-
-// --- Specific Arena Stats for Fragmentation Report (NEW FUNCTION) ---
-// Note: This is a helper function you'll need to call in your main/test file to get per-zone stats.
-void allocator_arena_stats(int arena_index, size_t* N, size_t* F, size_t* L) {
-    common_header_t *heads[] = {tiny_freelist_head, small_freelist_head, medium_freelist_head};
-    common_header_t *current = heads[arena_index];
-    
-    size_t count = 0;
-    size_t total_free_bytes = 0;
-    size_t largest_block_size = 0;
-
-    while (current != NULL) {
-        count++;
-        total_free_bytes += (size_t)current->size;
-
-        if ((size_t)current->size > largest_block_size) {
-            largest_block_size = (size_t)current->size;
-        }
-
-        current = current->next;
-    }
-
-    *N = count;
-    *F = total_free_bytes;
-    *L = largest_block_size;
 }

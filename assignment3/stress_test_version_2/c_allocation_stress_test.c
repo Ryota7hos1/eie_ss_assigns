@@ -23,7 +23,7 @@
 
 // Tunable Parameters (keep these value to test all version first)
 #define N_REQUESTS   50000         // total number of allocation requests
-#define MAX_REQ_SIZE 32 * 1024     // cap on a single request size (bytes)
+#define MAX_REQ_SIZE 37 * 1024     // cap on a single request size (bytes)
 #define D_FREQ       128           // every D_FREQ allocations, free a random live block to create holes
 #define LIVE         512           // number of concurrently live allocations to keep
 

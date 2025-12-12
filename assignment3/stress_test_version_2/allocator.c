@@ -7,7 +7,7 @@
 
 // global definitions that are: default to Best-Fit and Merging
 int FIT_STRATEGY = BEST_FIT; 
-int MERGE_ENABLED = 0;
+int MERGE_ENABLED = 1;
 
 static void *global_mem = NULL;
 
